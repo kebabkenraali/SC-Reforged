@@ -71,6 +71,9 @@ var attack_ids: Array = []      # PART ids the AI block says to attack (a7)
 var scripted := false           # behaviour comes from a mission AI program
 var takeoff := false            # script action a1: take off from the ground
 var takeoff_after: Node3D       # wait for this aircraft (the flight lead) to get airborne
+## Route cruise speed in m/s (0 = no limit). Every aircraft shares the F-16
+## physics, so transports need this or they fly their route at fighter speed.
+var cruise_speed := 0.0
 
 var model_instance: MeshInstance3D
 var _ai_target := Vector3.ZERO
@@ -346,6 +349,8 @@ func _ai(dt: float) -> void:
 		afterburner = true
 		return
 	afterburner = false
+	if _terrain_escape():
+		return
 	if attack_point == null and _fly_formation():
 		return
 	if attack_point != null:
@@ -355,6 +360,9 @@ func _ai(dt: float) -> void:
 		var aim: Vector3 = attack_point
 		if spd < 160.0:
 			aim.y = minf(aim.y, global_position.y - 600.0)   # dive to regain speed
+		# Never dive for speed below 800 m over the ground under the aim point.
+		if terrain != null and spd < 160.0:
+			aim.y = maxf(aim.y, terrain.height_at(aim.x, aim.z) + 800.0)
 		steer_towards(aim, pull, 250.0)
 		throttle = 1.0
 		afterburner = spd < 230.0 or global_position.distance_to(attack_point) > 4000.0
@@ -365,6 +373,8 @@ func _ai(dt: float) -> void:
 			route_index += 1
 		steer_towards(wp)
 		throttle = 0.8
+		if cruise_speed > 0.0:
+			throttle = clampf(0.45 + (cruise_speed - speed()) * 0.03, 0.15, 1.0)
 		return
 	_ai_timer -= dt
 	if _ai_timer <= 0.0 or global_position.distance_to(_ai_target) < 1500.0:
@@ -374,6 +384,25 @@ func _ai(dt: float) -> void:
 		_ai_target.y = (terrain.height_at(_ai_target.x, _ai_target.z) if terrain else 0.0) + randf_range(800.0, 2500.0)
 	steer_towards(_ai_target)
 	throttle = 0.8
+
+
+## Terrain safety for every airborne AI mode (attack, formation, route):
+## the AI used to follow its target - or its descending flight lead - into
+## the hillside (Stern hit the ground in every MISN-1A run). Pulls out when
+## the path 3 s ahead, or the height while sinking fast, gets too low.
+func _terrain_escape() -> bool:
+	if terrain == null or on_ground:
+		return false
+	var ahead: Vector3 = global_position + velocity * 3.0
+	var g: float = maxf(terrain.height_at(ahead.x, ahead.z), terrain.height_at(global_position.x, global_position.z))
+	if ahead.y - g >= 400.0 and not (global_position.y - g < 600.0 and velocity.y < -40.0):
+		return false
+	var out := Vector3(velocity.x, 0.0, velocity.z)
+	out = out.normalized() if out.length() > 1.0 else -global_transform.basis.z
+	steer_towards(global_position + out * 3000.0 + Vector3.UP * 3000.0, 1.0, 250.0)
+	throttle = 1.0
+	afterburner = true
+	return true
 
 
 ## Station keeping on the formation leader. Returns false when there is no

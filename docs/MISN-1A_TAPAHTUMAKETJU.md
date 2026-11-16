@@ -112,6 +112,16 @@ MiGit on pudotettu ennen kuin rahtikone on laskeutunut JA pelaaja tullut rahtike
 laskeutuneen C-130:n). Testiautopilotti lentää reitin ennen MiGejä, joten se ei saa skriptin onnistumista;
 kotiin laskeutuminen kaikki MiGit pudotettuina lasketaan silti onnistumiseksi (`targets_left() == 0`).
 
+## Korjattu 2026-11-16: skriptin onnistumispolku toimii
+
+C-130:n "We're safe" vaatii, että MiG 7 on ensin tullut 5 NM:n päähän rahtikoneesta (lippu 6)
+ja kaikki MiGit on hoidettu rahtikoneen vielä lentäessä. Aiemmin se ei voinut toteutua:
+MiGit syntyivät vasta pelaajan tullessa ilmatilaan, ja C-130 lensi hävittäjän nopeudella ja
+ehti laskeutua 50 s MiGien ilmestymisen jälkeen. Nyt saatettava C-130 herättää kohtauksen
+itse, lentää 170 solmun PART-nopeuttaan ja siipimies taistelee. Tulos 3/3 lokitetulla
+lennolla: liput 6, 7, 12, 14 ja Strike Basen "Mission accomplished". Yksityiskohdat:
+`SUUNNITELMA.md`, vaihe 2.
+
 ## Huomioita suunnitteluun ja autopilottiin
 
 - Pelaajan route-blokin `ab n` -käskyt ovat reittipisteiden tekstejä (MSGS[n]), eivät

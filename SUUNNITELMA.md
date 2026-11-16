@@ -193,6 +193,34 @@ Hyväksyminen: `--approach` 2/2 ja täysi MISN-1A vähintään 5/5 `result=succe
 
 ### Vaihe 2: MISN-1A valmiiksi tehtävänä
 
+**OSITTAIN TEHTY 16.11.2026** (ennen vaihetta 1, käyttäjän pyynnöstä). Tulos 3 lokitetulla
+täydellä lennolla: tehtäväskriptin oma onnistumispolku 3/3 ("We're safe" → lippu 12 →
+"Mission accomplished"), Stern ja C-130 selviävät 3/3, siipimies pudottaa 1–2 MiGiä.
+Kaikki 3 lentoa kaatuvat silti laskussa (vaihe 1). Korjatut viat:
+- Siipimiehet eivät ampuneet koskaan: `_enemy_ai()` ajaa nyt myös liittoutuneet hävittäjät
+  (kuljetuskoneet rajataan `TRANSPORT_MODELS`-listalla). Siipimies irtoaa muodostelmasta
+  alle 10 km:n uhkiin.
+- Tekoälyllä ei ollut maastoväistöä: Stern lensi maahan joka ajossa (ensin kaartotaistelussa,
+  sitten muodostelmassa pelaajan laskeutuessa). Uusi `aircraft.gd _terrain_escape()` kaikissa
+  ilmatiloissa.
+- Kohtauksen koneet heräsivät vain pelaajan tullessa alueelle. Nyt myös saatettava
+  liittolainen herättää ne (C-130 lentää MiGien ilmatilan läpi).
+- C-130 lensi hävittäjän nopeudella (kaikilla koneilla on F-16:n fysiikka): kuljetuskoneille
+  `cruise_speed` PART-nopeudesta (C-130: 170 kt, alaraja 120 m/s).
+- Autopilotti valitsee ensin saatettavaa uhkaavan vihollisen ja lähtee puolustamaan myös
+  yli 12 km:n päähän.
+- Debriefin lentoaika, skriptin `a0`-odotus ja vihollisten tykkisarjat käyttivät
+  seinäkelloa (10× nopeudella väärin): nyt simulaatioaika `_sim_time`.
+- Laskeutunut (skriptin poistama) C-130 laskettiin menetetyksi siipimieheksi.
+- `ACTIVATE`-lokirivi näytti maanalaisen PART-paikan; nyt todellinen syntypaikka.
+  C-130:n aktivointi kohtaamispaikalle 300 m AGL:ään on varmistettu lennosta.
+
+Avoinna tästä vaiheesta: kohdat 5 (toistettavuus) ja 6 (käyttäjän käsilento).
+Havainto skriptistä: `46 r` -opkoodin tulkinta ("jos toiminto kesken") on epävarma.
+C-130:n blokissa 7 sitä edeltää `45 06` (push lippu 6), mikä viittaa ehdolliseen hyppyyn
+pinon arvon perusteella. Nykyisellä tulkinnalla onnistumispolku toimii, mutta asia
+kannattaa tarkistaa muiden tehtävien kanssa (vaihe 3, `prog_analyze.gd`).
+
 1. C-130: lokita aktivointipaikka lennossa (`--log`) ja varmista, että se lentää
    rahtikentälle ja laskeutuu (lippu 8).
 2. Skriptin oma onnistumispolku: autopilotti hoitaa MiGit ennen rahtikentälle menoa

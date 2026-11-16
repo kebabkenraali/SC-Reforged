@@ -29,6 +29,8 @@ on git-historiassa commitissa `2aca5e2`: `git show 2aca5e2:AI_INSTRUCTIONS.md`.
 ## Tila 16.11.2026
 
 - Yksikkötestit vihreitä, loppulähestyminen (`--approach`) laskeutuu.
+- MISN-1A:n tehtäväosuus toimii (vaihe 2): skriptin oma onnistumispolku 3/3, siipimies ja
+  C-130 selviävät.
 - **Täysi MISN-1A-autopilottilento ei laskeudu (0/3).** Kone osuu maahan noin 600 m ennen
   kynnystä. M1 ei ole saavutettu. Korjaus on suunnitelman vaihe 1.
 
@@ -87,6 +89,10 @@ onnistumisen merkki on "Landed at base" ja runko 100 %.
 - Laskeutumisessa on kaksi korkeusdatumia: liukupolku lasketaan kynnyksestä, mutta
   `agl` paikallisesta maastosta. Nouakchottin ja tukikohdan ympäristössä ero on suuri.
 - Kosketus hyväksytään alle noin 165 m/s (`aircraft.gd`); pehmeä lasku on alle 115 m/s.
+- Kaikilla koneilla on samat F-16:n suoritusarvot. Kuljetuskoneiden nopeutta rajoittaa
+  vain `cruise_speed`; uusille konetyypeille rajaus `TRANSPORT_MODELS`-listaan.
+- Pelilogiikan ajastukset simulaatioajalla (`_sim_time`), ei `Time.get_ticks_msec()`:llä.
+  Vain radioäänen ajoitus on tarkoituksella reaaliajassa.
 
 **Tehtävädata**
 - AREA-tietueen koko riippuu tyypistä: 'S' 49, 'B' 65, 'C' 53 tavua.

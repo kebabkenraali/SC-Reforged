@@ -22,6 +22,9 @@ const ENEMY_MODELS := ["OBJECTS/MIG29.IFF", "OBJECTS/MIG21.IFF", "OBJECTS/MIG29G
 const BULLET_SPEED := 1050.0
 const BULLET_LIFE := 2.0
 const DETECT_RANGE := 22000.0     # enemy fighters engage inside this distance
+const ALLY_ENGAGE_RANGE := 10000.0  # wingmen break formation for bandits inside this distance
+## Non-combat aircraft (model name fragments): they never dogfight.
+const TRANSPORT_MODELS := ["C130", "747", "L1011", "E-3", "E3SENTRY", "LEAR", "KC135", "CARGO"]
 const LOCK_CONE := 0.52           # player missile lock half-angle (rad)
 const SAFE_RADIUS := 8000.0       # terrain AA this close to the player start is friendly
 
@@ -88,6 +91,7 @@ var stats := {"shots": 0, "missiles": 0, "bombs": 0, "air_kills": 0, "ground_kil
 var radio_log: Array = []
 var mission_over := false
 var _t_start := 0.0
+var _sim_time := 0.0             # simulated seconds (physics time: follows --speed and the time warp)
 var _was_airborne := false
 var _layer: CanvasLayer
 
@@ -213,7 +217,7 @@ func _ready() -> void:
 	add_child(layer)
 	_layer = layer
 	_setup_cockpit_audio()
-	_t_start = Time.get_ticks_msec() / 1000.0
+	_t_start = _sim_time
 	_find_home_runway()
 	if approach and home_runway != null:
 		_setup_approach()
@@ -374,10 +378,16 @@ func _spawn_part(i: int, spawn_pos_override: Variant = null):
 	var node
 	if airborne or wingman:
 		var a = _spawn(model_name, _pal, _smooth)
+		var spawn_speed: float = maxf(part.speed * 0.5144, 180.0)
+		if _is_transport_model(part.model):
+			# The PART speed is the original cruise (C-130: 170 kt). The floor
+			# keeps it above the shared F-16 flight model's stall speed.
+			a.cruise_speed = maxf(part.speed * 0.5144, 120.0)
+			spawn_speed = a.cruise_speed
 		if airborne:
 			var pos: Vector3 = part_pos
 			pos.y = maxf(pos.y, g + 300.0)
-			a.respawn(pos, -deg_to_rad(part.heading), maxf(part.speed * 0.5144, 180.0))
+			a.respawn(pos, -deg_to_rad(part.heading), spawn_speed)
 			# Enemies begin at their briefing position: they do not cruise
 			# the whole map from the first frame (the original brought the
 			# raiders in with the scenario scene). Wingmen/friendlies fly on.
@@ -421,6 +431,7 @@ func _spawn_part(i: int, spawn_pos_override: Variant = null):
 	_part_nodes[i] = node
 	node.set_meta("part_model", part.model)   # original PART data of this aircraft/object
 	node.set_meta("part_side", part.side)
+	node.set_meta("part_id", part.id)
 	# Radio voice: the CAST entry of this part (INTEL/<actor>.IFF + SPEECH.PAK).
 	node.set_meta("actor", mission.cast[part.id] if part.id >= 0 and part.id < mission.cast.size() else "")
 	if node.has_signal("damaged"):
@@ -636,8 +647,11 @@ func _activate(id: int) -> void:
 	_activating = false
 	if debug_log:
 		var pp: Dictionary = mission.parts[i]
-		var g: float = terrain.height_at(pp.pos.x, pp.pos.z) if terrain else 0.0
-		print("ACTIVATE id=%d %s pos=%s agl=%.0f node=%s" % [id, pp.model, pp.pos.round(), pp.pos.y - g, n])
+		# Where the node actually entered the world (the PART position can be a
+		# placeholder below the terrain, see _activation_spawn_position).
+		var at: Vector3 = n.global_position if n != null else pp.pos
+		var g: float = terrain.height_at(at.x, at.z) if terrain else 0.0
+		print("ACTIVATE id=%d %s pos=%s agl=%.0f part_pos=%s node=%s" % [id, pp.model, at.round(), at.y - g, pp.pos.round(), n])
 	if n != null:
 		_link_formations()
 		if n.get("velocity") != null and enemies.has(n):
@@ -732,6 +746,7 @@ func vm_remove(id: int) -> void:
 	n.alive = false
 	n.visible = false
 	n.set_physics_process(false)
+	n.set_meta("removed", true)   # left the mission (landed), not lost: the debrief counts it home
 
 
 func vm_message(key: int, n: int) -> void:
@@ -768,7 +783,7 @@ func vm_action(key: int, op: int, arg: int) -> void:
 	var cur = _actions.get(key)
 	if cur != null and cur.op == op and cur.arg == arg:
 		return
-	_actions[key] = {"op": op, "arg": arg, "t0": Time.get_ticks_msec() / 1000.0}
+	_actions[key] = {"op": op, "arg": arg, "t0": _sim_time}
 	var a = _node_for(key) if key >= 0 else null
 	if a == null or a.get("velocity") == null:
 		return
@@ -801,7 +816,7 @@ func vm_action_done(key: int) -> bool:
 	var a = _node_for(key) if key >= 0 else null
 	match act.op:
 		0xa0:
-			return Time.get_ticks_msec() / 1000.0 - act.t0 >= act.arg
+			return _sim_time - act.t0 >= act.arg
 		0xa1:
 			if a == null or a.get("velocity") == null:
 				return true
@@ -898,8 +913,18 @@ func _update_scenes() -> void:
 		var inside: bool = sc.area < 0
 		if not inside and sc.area < mission.areas.size():
 			var a: Dictionary = mission.areas[sc.area]
-			var d: float = Vector2(a.pos.x - player.global_position.x, a.pos.z - player.global_position.z).length()
-			inside = d < maxf(a.radius, 6000.0)
+			var reach: float = maxf(a.radius, 6000.0)
+			# The player, or an escorted ally flying through on its own (MISN-1A:
+			# the C-130 crosses the MiGs' restricted airspace on its way to the
+			# cargo field - "protect the C-130 until you reach Cargo Destination").
+			var who: Array = [player]
+			for ally in allies:
+				if ally.alive and _escort_ids.has(ally.get_meta("part_id", -1)):
+					who.append(ally)
+			for w in who:
+				if Vector2(a.pos.x - w.global_position.x, a.pos.z - w.global_position.z).length() < reach:
+					inside = true
+					break
 		if inside:
 			_scene_entered[k] = true
 			# The scene's own aircraft enter the world now.
@@ -1396,6 +1421,7 @@ func _set_tone(n: String, on: bool) -> void:
 
 
 func _physics_process(dt: float) -> void:
+	_sim_time += dt
 	_update_cockpit_audio(dt)
 	_player_input(dt)
 	_update_fast_travel(dt)
@@ -1634,9 +1660,19 @@ func _autopilot() -> void:
 		_say("Combat done - autopilot: landing.", 4.0)
 		_autopilot_land()
 		return
+	# Target choice: nearest enemy, but a bandit whose script orders it at an
+	# escorted ally (MISN-1A: MiG id 5 hunts the C-130) counts as 15 km
+	# closer - losing the escort fails the mission, losing a dogfight does not.
 	var best = null
+	var best_score := 1e12
 	for e in enemies:
-		if e.alive and (best == null or e.global_position.distance_to(player.global_position) < best.global_position.distance_to(player.global_position)):
+		if not e.alive:
+			continue
+		var score: float = e.global_position.distance_to(player.global_position)
+		if _threatens_escort(e):
+			score -= 15000.0
+		if score < best_score:
+			best_score = score
 			best = e
 	if best == null:
 		# Nothing in the air: ground targets if any, otherwise fly the route
@@ -1668,7 +1704,8 @@ func _autopilot() -> void:
 	# cannon worth chasing after, otherwise the mission route is important.
 	var stores := _air_stores()
 	_ap_debug = "air tgt=%s dist=%.0f tgt_y=%.0f stores=%d nav=%d/%d left=%d" % [best.display_name, dist, best.global_position.y, stores, nav_index, waypoints.size(), remaining]
-	if (dist > 12000.0 or (stores == 0 and dist > 2500.0)) and nav_index < waypoints.size():
+	var defend: bool = _threatens_escort(best)
+	if ((dist > 12000.0 and not defend) or (stores == 0 and dist > 2500.0)) and nav_index < waypoints.size():
 		var wp: Vector3 = waypoints[nav_index].pos
 		var cruise := maxf(wp.y, terrain.height_at(wp.x, wp.z) + 1500.0) if terrain else wp.y
 		player.steer_towards(Vector3(wp.x, cruise, wp.z), 0.5, 300.0)
@@ -1712,6 +1749,18 @@ func _autopilot() -> void:
 			and stores > 0 and player.missile_cooldown <= 0.0:
 		player.missile_cooldown = 12.0
 		_player_missile()
+
+
+## True when the script sends this enemy after an escorted, still living ally.
+func _threatens_escort(e) -> bool:
+	if e.standby or e.attack_ids.is_empty():
+		return false
+	for id in e.attack_ids:
+		if _escort_ids.has(id):
+			var n = _node_for(id)
+			if n != null and n.alive:
+				return true
+	return false
 
 
 ## Remaining air-to-air stores (SWINDERM/SWINDERJ/AMRAAM etc.).
@@ -2096,20 +2145,26 @@ func _fire(shooter, spread_rad := 0.002) -> void:
 ## Enemy fighters: patrol until the player is within DETECT_RANGE, then lead
 ## pursuit with guns and missiles; break and drop countermeasures when shot at.
 func _enemy_ai() -> void:
-	for e in enemies:
+	# Allied fighters (the wingman) run the same combat logic: before this
+	# they never fired a shot, so the MiG ordered to attack Stern always won.
+	var fighters: Array = enemies.duplicate()
+	for a in allies:
+		if a.alive and not a.on_ground and not _is_transport(a):
+			fighters.append(a)
+	for e in fighters:
 		if not e.alive:
 			continue
 		e.evading = not e.incoming.is_empty()
 		if e.evading and e.cm_cooldown <= 0.0 and e.countermeasures > 0 and randf() < 0.05:
 			_drop_countermeasure(e)
 
-		# Build list of valid hostile targets using team-based IFF
+		# Build list of valid hostile targets using team-based IFF. Enemies
+		# still holding their briefing position (standby) are not engaged.
 		var potential_targets: Array = []
-		if player.alive and not player.on_ground and e.is_hostile_to(player):
-			potential_targets.append(player)
-		for a in allies:
-			if a.alive and not a.on_ground and e.is_hostile_to(a):
-				potential_targets.append(a)
+		for c in [player] + allies + enemies:
+			if c != e and c.alive and not c.on_ground and not c.standby and e.is_hostile_to(c):
+				potential_targets.append(c)
+		var engage_range: float = DETECT_RANGE if e.team != 1 else ALLY_ENGAGE_RANGE
 
 		var tgt = null
 		if e.scripted and not e.attack_ids.is_empty():
@@ -2136,7 +2191,7 @@ func _enemy_ai() -> void:
 			continue
 		var to: Vector3 = tgt.global_position - e.global_position
 		var dist: float = to.length()
-		if dist > DETECT_RANGE:
+		if dist > engage_range:
 			e.attack_point = null
 			continue
 		e.attack_point = tgt.global_position + tgt.velocity * clampf(dist / 900.0, 0.0, 2.5)
@@ -2146,7 +2201,7 @@ func _enemy_ai() -> void:
 		# Cannon: prefer the gun when in envelope (do not spam missiles at close range).
 		var gun_env := dist < 1400.0 and ang < 0.18
 		if gun_env and e.can_fire():
-			var now := Time.get_ticks_msec() / 1000.0
+			var now := _sim_time
 			if e.get_meta("gun_burst_until", 0.0) <= now:
 				if randf() < 0.35:
 					e.set_meta("gun_burst_until", now + randf_range(0.18, 0.55))
@@ -2164,6 +2219,18 @@ func _enemy_ai() -> void:
 					e.missile_cooldown = randf_range(10.0, 18.0)
 					break
 
+
+
+func _is_transport(a) -> bool:
+	return _is_transport_model(str(a.get_meta("part_model", a.model_name)))
+
+
+func _is_transport_model(model: String) -> bool:
+	var m: String = model.to_upper()
+	for t in TRANSPORT_MODELS:
+		if m.contains(t):
+			return true
+	return false
 
 
 ## AA guns fire leading flak bursts; SAM sites launch guided missiles. Both need
@@ -2621,8 +2688,8 @@ func _end_mission(reason: String) -> void:
 	var wps := []
 	for i in waypoints.size():
 		wps.append({"name": waypoints[i].name, "reached": i < nav_index or (result == "success" and i == waypoints.size() - 1)})
-	var t := Time.get_ticks_msec() / 1000.0 - _t_start
-	var allies_alive := allies.filter(func(a): return a.alive).size()
+	var t := _sim_time - _t_start
+	var allies_alive := allies.filter(func(a): return a.alive or a.get_meta("removed", false)).size()
 	var d = Debrief.new()
 	d.report = {"result": result, "reason": why, "mission": mission.name, "file": mission_file.get_file().get_basename(),
 		"waypoints": wps, "log": radio_log,
