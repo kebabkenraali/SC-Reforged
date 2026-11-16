@@ -63,17 +63,18 @@ void fragment() {
 		float n1 = noise(obj_pos * 0.45);
 		float n2 = noise(obj_pos * 2.3);
 		float wear = n1 * 0.65 + n2 * 0.35;
-		float luma = dot(base, vec3(0.299, 0.587, 0.114));
-		if (kind == 1 && luma < 0.22) {
-			// Canopy glass: the dark texels of a canopy texture. Smooth, with a
-			// strong reflection; the paint around the frame falls through below.
-			ALBEDO = base * 0.6;
-			ROUGHNESS = 0.06;
+		if (kind == 1) {
+			// Canopy: the original glass texels are mid greys (a dark-texel
+			// test found none), so the whole canopy texture is glass - the
+			// frames are thin. Darkened and blue-tinted so the sky reflection
+			// reads as glass, smooth and strongly reflective.
+			ALBEDO = base * vec3(0.55, 0.6, 0.7);
+			ROUGHNESS = 0.08;
 			METALLIC = 0.0;
-			SPECULAR = 0.9;
+			SPECULAR = 0.8;
 			CLEARCOAT = 1.0;
-			CLEARCOAT_ROUGHNESS = 0.05;
-			RIM = 0.25;
+			CLEARCOAT_ROUGHNESS = 0.04;
+			RIM = 0.2;
 			RIM_TINT = 0.6;
 		} else if (kind == 2) {
 			// Exhaust nozzle: bare, heat-darkened metal.
@@ -92,11 +93,14 @@ void fragment() {
 			base *= mix(0.965, 1.03, cell);
 			base *= 1.0 - 0.07 * panel_lines(obj_pos, obj_nrm);
 			ALBEDO = base;
-			ROUGHNESS = mix(0.32, 0.6, wear) + (cell - 0.5) * 0.08;   // satin paint, rougher where worn
+			// Satin military paint, rougher where worn. Kept matte enough that the
+			// smoothed normals do not focus the sun into a white hot spot
+			// (seen on the MiG-29 flank with roughness 0.32 + clearcoat 0.25).
+			ROUGHNESS = mix(0.45, 0.7, wear) + (cell - 0.5) * 0.08;
 			METALLIC = 0.05;
-			SPECULAR = 0.55;
-			CLEARCOAT = 0.25;
-			CLEARCOAT_ROUGHNESS = 0.35;
+			SPECULAR = 0.45;
+			CLEARCOAT = 0.1;
+			CLEARCOAT_ROUGHNESS = 0.5;
 		}
 	} else {
 		ALBEDO = base;

@@ -273,7 +273,7 @@ alkuperäisiä RealSpace-malleja, ja niiden skinejä parannetaan ajonaikaisesti;
 alkuperäisdatasta johdettua ei tallenneta levylle.
 
 Tehty 16.11.: kun "Smooth textures" on päällä, vähävärisille tekstuureille (≤ 16
-palettiväriä: naamioinnit, merkinnät) tehdään 4× Scale2x-skaalaus palettiväri-indekseille,
+palettiväriä: naamioinnit, merkinnät) tehdään 2× Scale2x-skaalaus palettiväri-indekseille,
 ja `model.gdshader` lisää satiinimaalin, kirkaslakan sekä hennon kulumis- ja
 paneelivaihtelun mallin koordinaateissa. Pois päältä näytetään alkuperäiset pikselit
 entisellä valaistuksella.
@@ -286,10 +286,17 @@ Tehty 16.11. (2. kierros), samoin vain parannetussa tilassa:
 - Paneelit: 1,6 m:n solukohtainen sävy- ja karheusvaihtelu, saumat himmeämmät.
 - Mallikatselimen kuvakaappausvalitsimet `--view_zoom`, `--view_still`, `--view_orbit=yaw,pitch`.
 
-Ideoita jatkoon: kuomun tarkistus edestä kuvattuna; potkurien suorakaidemuoto (kiekko
-ei ole pyöreä); paneelijaon sovitus geometriaan; normaalikartta tekstuurin kirkkaudesta;
-skaalaus näytönohjaimella, jos latausaika kasvaa (`smoke_test` 1,3 s → 7,4 s, kun
-kaikki 213 mallia rakennetaan).
+Tehty 16.11. (3. kierros):
+- Kuomu: koko kuomutekstuuri lasina (tummennettu, sinertävä, kiiltävä). Lasitekselit ovat
+  alkuperäisessä keskiharmaita, joten tummuusraja ei löytänyt niitä.
+- Maali mattaisemmaksi (karheus 0,45–0,7, kirkaslakka 0,1): pehmeät normaalit kokosivat
+  auringon valkoiseksi läiskäksi MiG-29:n kylkeen.
+- Potkurit: oma varjostin `prop_disc.gdshader`, pyöreä läpikuultava kiekko ja kärkirengas.
+- Skaalaus 4× → 2×: ulkonäkö lähes sama, lennon lataus noin 3,7 s → 2,7 s
+  (ennen skinejä noin 2 s). `smoke_test` (kaikki 213 mallia) noin 6 s.
+
+Ideoita jatkoon: paneelijaon sovitus geometriaan; normaalikartta tekstuurin
+kirkkaudesta; skaalaus näytönohjaimella, jos latausaika haittaa.
 
 ### Vaihe 5: Puuttuvat alkuperäisominaisuudet (backlog, ei järjestyksessä)
 

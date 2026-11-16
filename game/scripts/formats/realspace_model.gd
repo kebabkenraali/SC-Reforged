@@ -15,6 +15,7 @@ const Iff = preload("res://scripts/formats/iff.gd")
 const Lzw = preload("res://scripts/formats/lzw.gd")
 const Palette = preload("res://scripts/formats/sc_palette.gd")
 const MODEL_SHADER = preload("res://shaders/model.gdshader")
+const PROP_SHADER = preload("res://shaders/prop_disc.gdshader")
 
 ## Model units -> metres (an F-16 is ~8000 units long, 15 m in reality).
 const MODEL_SCALE := 15.0 / 8000.0
@@ -166,11 +167,13 @@ func build_mesh(palette: PackedColorArray, lod := 0, smooth_textures := true) ->
 			if fn.length_squared() < 1e-12:
 				continue
 			fn *= -1.0 if flip else 1.0
+			var fdir := fn.normalized()
 			for vi in tv:
 				var key3 := Vector3i((vertices[vi] * 1000.0).round())
 				if not corner_faces.has(key3):
 					corner_faces[key3] = []
-				corner_faces[key3].append(fn)
+				corner_faces[key3].append(fn)     # area-weighted (to sum)
+				corner_faces[key3].append(fdir)   # unit (for the angle test)
 	for tid in ids:
 		if tid >= triangles.size():
 			continue
@@ -201,9 +204,10 @@ func build_mesh(palette: PackedColorArray, lod := 0, smooth_textures := true) ->
 			var vn := n
 			if smooth_textures:
 				var sum := Vector3.ZERO
-				for fn2 in corner_faces.get(Vector3i((p[k] * 1000.0).round()), []):
-					if fn2.normalized().dot(n) > smooth_cos:
-						sum += fn2
+				var cf: Array = corner_faces.get(Vector3i((p[k] * 1000.0).round()), [])
+				for j in range(0, cf.size(), 2):
+					if cf[j + 1].dot(n) > smooth_cos:
+						sum += cf[j]
 				if sum.length_squared() > 1e-12:
 					vn = sum.normalized()
 			g.n.append(vn)
@@ -255,16 +259,14 @@ func _winding_flip(ids: PackedInt32Array) -> bool:
 
 func _material(palette: PackedColorArray, tex_index: int, smooth: bool) -> Material:
 	if smooth and tex_index >= 0 and surface_kind(textures[tex_index].name) == 3:
-		# Spinning propeller: a see-through blur disc instead of a solid board
-		# (the original drew the noise texture opaque).
+		# Spinning propeller: a round see-through blur disc instead of a solid
+		# square board (the original drew the noise texture opaque).
 		var tx0: Dictionary = textures[tex_index]
-		var disc := StandardMaterial3D.new()
-		disc.albedo_texture = ImageTexture.create_from_image(Palette.to_image(tx0.pixels, tx0.w, tx0.h, palette, 255))
-		disc.albedo_color = Color(0.5, 0.5, 0.5, 0.2)
-		disc.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		disc.cull_mode = BaseMaterial3D.CULL_DISABLED
-		disc.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		disc.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		var img0 := Palette.to_image(tx0.pixels, tx0.w, tx0.h, palette, 255)
+		img0.generate_mipmaps()
+		var disc := ShaderMaterial.new()
+		disc.shader = PROP_SHADER
+		disc.set_shader_parameter("prop_tex", ImageTexture.create_from_image(img0))
 		return disc
 	var mat := ShaderMaterial.new()
 	mat.shader = MODEL_SHADER
@@ -279,18 +281,17 @@ func _material(palette: PackedColorArray, tex_index: int, smooth: bool) -> Mater
 		var tex := ImageTexture.create_from_image(img)
 		mat.set_shader_parameter("albedo_tex_px", tex)
 		if smooth:
-			# Enhanced skin: 4x edge-preserving upscale of the palette indices
-			# (Scale2x twice), so linear filtering smooths the edges of the
+			# Enhanced skin: 2x edge-preserving upscale of the palette indices
+			# (Scale2x; a second pass looked the same and cost ~1 s per flight load), so linear filtering smooths the edges of the
 			# camouflage shapes instead of blurring them into blotches.
 			# Runtime only - the original texels are never written to disk.
 			# Only flat-colour pixel art (camouflage, markings): noisy photo-like
 			# textures (hangar walls) turn blocky under Scale2x.
-			if not tx.has("px4"):
-				tx["px4"] = []
+			if not tx.has("px2"):
+				tx["px2"] = []
 				if _colour_count(tx.pixels, 17) <= 16:
-					var p2: Array = _scale2x(tx.pixels, tx.w, tx.h)
-					tx["px4"] = _scale2x(p2[0], p2[1], p2[2])
-			var p4: Array = tx.px4
+					tx["px2"] = _scale2x(tx.pixels, tx.w, tx.h)
+			var p4: Array = tx.px2
 			if not p4.is_empty():
 				var big := Palette.to_image(p4[0], p4[1], p4[2], palette, 255)
 				big.generate_mipmaps()
