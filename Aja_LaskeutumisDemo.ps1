@@ -2,8 +2,8 @@
 # (tiedosto pysyy ASCII:na - PS 5.1 lukee BOMattoman .ps1:n ANSI:na)
 #
 # Kaksi tilaa:
-#   .\Aja_LaskeutumisDemo.ps1              -> loppulähestymis-demo (kone 8 km:llä
-#                                             kiitotiellä, autopilotti laskeuttaa;
+#   .\Aja_LaskeutumisDemo.ps1              -> loppulahestymis-demo (kone 8 km:lla
+#                                             kiitotiella, autopilotti laskeuttaa;
 #                                             n. 2-4 min katseluaika oletusnopeudella)
 #   .\Aja_LaskeutumisDemo.ps1 -Tila tehtava -> koko MISN-1A-tehtava: taistelu +
 #                                             laskeutuminen (pidempi ajo)
@@ -36,18 +36,18 @@ if (-not (Test-Path $engine)) {
 }
 
 $game = Join-Path $projekti "game"
-$data = "C:/AI_Projektit/SC-REFORGED"
+$dirarg = @(); if ($env:SC_GAME_DIR) { $dirarg = @("--dir=$($env:SC_GAME_DIR)") }
 
 if ($Tila -eq "tehtava") {
 	# Koko tehtava: taisteluautopilotti hoitaa tehtavan ja luovuttaa laskeutumiselle.
 	& $engine --path "$game" --auto=flight --mission=MISSIONS/MISN-1A.IFF `
-		--autopilot --speed=$Nopeus --dir="$data"
+		--autopilot --speed=$Nopeus @dirarg
 }
 else {
-	# Approach-demo: spawnataan suoraan loppulähestymiselle 8 km:llä.
+	# Approach-demo: spawnataan suoraan loppulahestymiselle 8 km:lla.
 	# Lippu --approach kaynnistaa laskeutumisautopilotin heti.
 	& $engine --path "$game" --auto=flight --mission=MISSIONS/MISN-1A.IFF `
-		--approach --speed=$Nopeus --dir="$data"
+		--approach --speed=$Nopeus @dirarg
 }
 
 Write-Host ""

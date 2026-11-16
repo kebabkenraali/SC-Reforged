@@ -3,6 +3,11 @@ LASKEUTUMISDEMO - MITA TEHTY JA MITEN KATSOT SITA
 
 Paivitetty 11.11.2026 (late).
 
+HUOM 16.11.2026: approach-demo (oletustila) laskeutuu edelleen, mutta
+"-Tila tehtava" paattyy talla hetkella koneen tuhoutumiseen juuri ennen
+kiitotieta. Kohdan 3 "3/3 onnistunutta" ei pade nykykoodiin.
+Ks. SUUNNITELMA.md, vaihe 1.
+
 1) MITEN AJAT DEMON
 -------------------
 Avaa PowerShell ja aja:

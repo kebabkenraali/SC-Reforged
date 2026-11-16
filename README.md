@@ -194,6 +194,20 @@ tools/blender-*           portable Blender for model conversion
 
 ## Tests
 
+The whole suite (unit tests, the final-approach landing and N full MISN-1A
+autopilot flights) runs with one command; the exit code is the number of
+failed items and logs go to `tmp/testit/`:
+
+```powershell
+.\Aja_Testit.ps1 -Taydet 0
+```
+
+```powershell
+.\Aja_Testit.ps1 -Taydet 5
+```
+
+Individual tests:
+
 ```bash
 tools/godot/Godot_v4.7.2-stable_win64_console.exe --headless --path game --script res://tests/smoke_test.gd
 ```
@@ -295,10 +309,15 @@ tools/godot/Godot_v4.7.2-stable_win64.exe --headless --path game --auto=flight -
 
 ## Next steps
 
-1. ~~Landing at the base at mission end~~ — **DONE**: M1 reached
-   (8.11.2026, `m1_fullG`: MISN-1A end-to-end `result=success — Landed at
-   base`). Remaining mission-script ops then: parameter table `21/24/25/2f`
-   and the `97` query.
+The current plan with verified status and acceptance criteria is
+[SUUNNITELMA.md](SUUNNITELMA.md); the list below is the feature backlog.
+
+1. **Landing at the base at mission end — REGRESSED.** M1 (MISN-1A
+   end-to-end on autopilot) was reached on 8.–11.11.2026, but on 16.11.2026
+   the full flight failed 3/3: the aircraft hits the ground about 600 m short
+   of the threshold. The 8 km final approach (`--approach`) still lands.
+   Remaining mission-script ops: parameter table `21/24/25/2f` and the `97`
+   query.
 2. **Wingman commands** and AI energy-management polish; per-shooter kill
    attribution for the debrief statistics.
 3. **Missile impact-rate playtest** (MISN-10A, decoy 30/15 %, authority
@@ -313,15 +332,12 @@ tools/godot/Godot_v4.7.2-stable_win64.exe --headless --path game --auto=flight -
    catalog (`17`), ledger (`19`) and effects `18`, `1a`, `1b`, `1d`, `22`,
    `24`, `26`.
 
-### Demo folder
-
-All manual testing happens in `C:\AI_Projektit\strike commander\demo`. The
-folder contains: `game/` (a copy of the `game/` folder), `Godot.exe`,
-`run_demo.bat` and `run_test.bat`.
-
 ### LLM Development Guide
 
 This section is meant for a second LLM (or a human) continuing development.
+Read [AI_INSTRUCTIONS.md](AI_INSTRUCTIONS.md) for the working rules and known
+pitfalls. The project is a git repository since 16.11.2026; the old hand-kept
+`demo/` copy of the game folder was removed (it is in the first commit).
 
 #### Current state
 * **PROG opcode decoding** — the tool `game/tools/prog_analyze.gd` lists the
@@ -335,7 +351,8 @@ This section is meant for a second LLM (or a human) continuing development.
   up on terrain prediction, hands over to the landing autopilot when the
   route is done and no hostiles remain. Landing: glide-slope intercept
   (3°), dead-centre short final, flare over the threshold, rollout → mission
-  end at the home base.
+  end at the home base. (Works from the `--approach` start; from a full
+  mission it currently crashes short of the runway, see SUUNNITELMA.md.)
 * **Waypoint jump** = teleport to the next waypoint (original behaviour),
   and a flyby camera cutaway plays at every waypoint.
 * **External free models**: `.glb` drop-ins in `game/models/` are loaded at
@@ -348,7 +365,6 @@ This section is meant for a second LLM (or a human) continuing development.
   invalid Godot-4 call) and was replaced by the real `vm_query_object`/
   `vm_query_param` hosts in `flight_scene.gd`.
 * **Cutscene VM** — the `Array.get_type()` error fixed.
-* **Demo folder** created and completed (scripts synced from `game/`).
 
 #### Continuation tasks
 1. Resolve the parameter table the `21/24/25/2f` pushes read from (`2e k` is
@@ -365,23 +381,10 @@ This section is meant for a second LLM (or a human) continuing development.
 * GDScript uses 4-space indentation (tabs in mission_vm/hud files where
   established by the surrounding file).
 * Constants are UPPER_SNAKE_CASE.
-* Batch files start with `@echo off` and set the `PATH` variable to the
-  `demo` folder before calling Godot.
-
-#### Running the demo folder
-```bat
-cd C:\AI_Projektit\strike commander\demo
-run_demo.bat
-```
-The demo starts Godot headless, runs the flight test in CANYON with the
-autopilot and saves logs to `logs\godot.log`.
-
-#### Automated tests
-```bat
-cd C:\AI_Projektit\strike commander\demo
-run_test.bat
-```
-The test runs the Godot call, takes a screenshot and prints the result.
+* Launchers (`Kaynnista.bat`, `Aja_*.bat`) use paths relative to their own
+  folder and the engine in `tools/godot`. The game data folder comes from
+  the `SC_GAME_DIR` environment variable or the game's own auto-detection.
+* PowerShell scripts stay pure ASCII.
 
 ## Rights
 

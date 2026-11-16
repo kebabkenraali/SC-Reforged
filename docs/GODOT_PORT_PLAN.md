@@ -72,6 +72,11 @@ landing → mission end. This is now the active milestone.
    success/failed summary with stats (shots, kills, landing quality)
 5. Everything survives flight: terrain pull-up, no crash into hillside
 
+**Milestone M1 status (16.11.2026): REGRESSED.** Three full MISN-1A autopilot
+runs on 16.11. all ended "Aircraft lost" about 600 m short of the threshold
+(unit tests and the `--approach` landing pass). See `SUUNNITELMA.md`, phase 1.
+The text below describes the state on 8.–11.11.2026, when M1 was reached.
+
 **Milestone M1 status (8.11.2026): REACHED.**
 Full end-to-end test (`m1_fullG`, MISN-1A Mauritania 1, `--autopilot`):
 takeoff -> waypoint route (all 4 reached) -> 3/3 MiG-21 kills -> escort

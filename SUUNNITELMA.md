@@ -143,6 +143,12 @@ ennen kuin se täyttyy.
 
 ### Vaihe 0: Perusta kuntoon (ennen yhtään koodimuutosta)
 
+**TEHTY 16.11.2026.** Lähtötila on commitissa `2aca5e2`. Poikkeamat alla olevasta listasta:
+`engine/`-kansio on vielä levyllä, koska siitä oli käynnissä Godot-prosessi (kansio on
+`.gitignore`:ssa, eikä mikään käynnistin enää viittaa siihen; sen voi poistaa käsin).
+`dist/` ja `dist.7z` jätettiin levylle (350 Mt, `.gitignore`:ssa), koska niiden
+tarpeellisuudesta ei ole tietoa. `demo/`-kansio poistettiin kokonaan.
+
 1. `git init` projektin juureen ja ensimmäinen commit nykytilasta sellaisenaan.
    `.gitignore`:en lisäksi: `dist/`, `dist.7z`, `tmp/`, `engine/`, `demo/Godot.exe`,
    `tools/blender-*/`, `docs/PLAYTESTERS_GUIDE.txt`, `docs/SC_MANUAL.txt`,

@@ -128,8 +128,8 @@ kotiin laskeutuminen kaikki MiGit pudotettuina lasketaan silti onnistumiseksi (`
 - C-130:n (id 8) PART-sijainti on absoluuttinen (0, 0.6 km, 152 m) eli maaston alla.
   `flight_scene.gd` käyttää aktivoivan kohtauksen aluetta tällaisen aktivoitavan koneen
   sijoituspaikkana ja nostaa sen vähintään 300 m maaston yläpuolelle. `mission_test.gd`:hen
-  lisättiin etäisyys- ja AGL-tarkistus, mutta testiajo ei tulostanut tarkistuksen tulosta.
-  Muutosta ei siis ole vielä validoitu lennossa.
+  lisättiin etäisyys- ja AGL-tarkistus. 16.11.2026 testi tulostaa tuloksen ja menee läpi
+  (etäisyys 0 m, AGL 300 m). Itse lennossa sijaintia ei ole vielä katsottu lokista.
 - SPOT 9–11 (alue -1, ±150 ft / 50000 ft) ovat todennäköisesti suhteellisia siirtymiä
   (muodostelma/sivuun ohjaus), eivät karttapisteitä.
 
