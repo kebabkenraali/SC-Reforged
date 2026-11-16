@@ -1,0 +1,55 @@
+LASKEUTUMISDEMO - MITA TEHTY JA MITEN KATSOT SITA
+===================================================
+
+Paivitetty 11.11.2026 (late).
+
+1) MITEN AJAT DEMON
+-------------------
+Avaa PowerShell ja aja:
+
+  cd "C:\AI_Projektit\strike commander"
+  .\Aja_LaskeutumisDemo.ps1              # LYHYT demo: laskeutuminen 8 km:lla
+  .\Aja_LaskeutumisDemo.ps1 -Tila tehtava  # KOKO tehtava MISN-1A (taistelu + lasku)
+  .\Aja_LaskeutumisDemo.ps1 -Nopeus 1    # reaaliaikainen katselu (hitain)
+
+Peli avautuu ikkunaan. Autopilotti lentää itse - sinun tarvitsee vain katsoa.
+
+Nappeja ikkunassa:
+  F1  = reittiautopilot paalle/pois
+  F2  = laskeutumisautopilot paalle/pois (approach-demossa jo paalla)
+  ESC = valikko
+
+2) MITA DEMO NAYTTAA
+--------------------
+Approach-demossa kone spawnaa loppulähestymiselle (8 km kiitotiesta,
+3 asteen liukupolku) ja laskeutumisautopilotti hoitaa:
+  - kiitotien etsiminen ja linjaus (waypoint-portit)
+  - liukupolun seuranta (porrastettu nopeus 160/130/118 m/s)
+  - commit: flarivoima + nenäspeuli
+  - touchdown + rullaus
+
+Koko tehtavassa saman laskeutumisen kayttää edelta taistelu, jonka
+taisteluautopilotti hoitaa reitin lopussa ja luovuttaa laskulle.
+
+3) TILANNE JOLLE DEMO RAKENTUU
+------------------------------
+11.11.2026: 3/3 onnistunutta MISN-1A-laskeutumista headless-verifioinnissa
+(exit 0, "MISSION OVER result=success Landed at base", hull 100%,
+touchdown ~99 m/s). Ratkaisu EI ollut uusi opaskoodi vaan palautus
+todistetusti toimivaan kokoonpanoon:
+
+  - pohja: flight_scene.gd.bak_20261111_collision
+  - peruutukset: nopeustavoite yksi luku 145 m/s (ei portaita 125/105),
+    flarin kaasu 0.04 (ei idle+brake-heiluntaa), rullaus 115 m/s
+
+Kierroksella loydetyt juurisyyt (dokumentointi: AI_INSTRUCTIONS.md,
+osio "Situation 11.11.2026 (late)"):
+  - krooninen terrain pull-up: vetotarkistus laukesi jatkuvasti 300-400 m
+    AGL:ssa kukkuloilla -> kone jai ikuiseen veto/lasku-kiertorataan
+    (selitti kaikkien aiempien timeout-ajojen "leijumisen")
+  - porttivalinta ilman hystereesia pomppii porttien valilla
+  - kaasun P-laki ilman viivetta vahvistaa dive/zoom-phugoidin
+
+Varmuuskopiot:
+  flight_scene.gd.bak_20261111_collision = toimiva tila
+  flight_scene.gd.bak_20261111_pattern   = epaonnistunut pattern-kokeilu

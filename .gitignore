@@ -1,0 +1,26 @@
+# Godot: generated caches
+.godot/
+*.import
+__pycache__/
+
+# Engine binaries and other large tools (download separately, see README)
+tools/godot/*.exe
+tools/blender-*/
+engine/
+demo/Godot.exe
+
+# Build output and screenshots
+dist/
+dist.7z
+shots/
+
+# Scratch files. tmp/ holds dumps with original game text: never commit those.
+tmp/*
+!tmp/flight_scene_gd_agentB_lineup_20261111.gd
+*.log
+
+# Copyrighted reference material (developer reference only, do not redistribute)
+docs/PLAYTESTERS_GUIDE.txt
+docs/SC_MANUAL.txt
+docs/DEKOMPILU/*
+!docs/DEKOMPILU/README.md

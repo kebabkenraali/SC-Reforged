@@ -1,0 +1,32 @@
+; Engine configuration file.
+; Strike Commander Reforged - unofficial modernized engine for the original game data.
+
+config_version=5
+
+[application]
+
+config/name="Strike Commander Reforged"
+config/description="Unofficial modern engine for Strike Commander (1993). Requires the original game."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[autoload]
+
+Settings="*res://scripts/core/settings.gd"
+SCData="*res://scripts/core/sc_data.gd"
+Sfx="*res://scripts/core/sfx.gd"
+Music="*res://scripts/core/music.gd"
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/vsync/vsync_mode=1
+
+[rendering]
+
+anti_aliasing/quality/msaa_3d=2
+lights_and_shadows/directional_shadow/size=4096
+textures/default_filters/anisotropic_filtering_level=4

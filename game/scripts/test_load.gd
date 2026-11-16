@@ -1,0 +1,3 @@
+﻿extends Node
+func _ready():
+    print("Test script loaded OK")
