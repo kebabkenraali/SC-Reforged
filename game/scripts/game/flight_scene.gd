@@ -50,6 +50,9 @@ var _loadout := {}            # the aircraft's original from the WPNS loadout, f
 var bomb_run := false         # testing: start at the computed release point for a mission target
 var debrief_after := -1.0     # testing: end the mission (as landed) after this many seconds
 var approach := false         # testing: start on final approach to the home runway
+var approach_dist := 8000.0   # --approach=M: distance from the threshold
+var approach_high := 120.0    # --approach_high=M: height above the 3 deg slope
+var approach_speed := 115.0   # --approach_speed=M/S
 
 # Autopilot modes (toggled by player input)
 var autopilot_waypoint := false   # follow mission waypoints
@@ -2629,12 +2632,12 @@ func _setup_approach() -> void:
 	if flat_start.dot(axis) < 0.0:
 		axis = -axis
 	var threshold_end: Vector3 = center + axis * half
-	var pos: Vector3 = center + axis * (half + 8000.0) - side * 60.0
-	pos.y = threshold_end.y + tan(deg_to_rad(GLIDE_SLOPE)) * 8000.0 + 120.0
+	var pos: Vector3 = center + axis * (half + approach_dist) - side * 60.0
+	pos.y = threshold_end.y + tan(deg_to_rad(GLIDE_SLOPE)) * approach_dist + approach_high
 	player.global_position = pos
 	# Face from the spawn point toward the runway interior.
 	var face := axis
-	player.respawn(pos, atan2(face.x, face.z), 115.0)
+	player.respawn(pos, atan2(face.x, face.z), approach_speed)
 	player.throttle = 0.65
 	autopilot_land = true   # --approach: the landing autopilot takes over at once
 

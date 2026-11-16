@@ -202,6 +202,10 @@ func start_flight(area: String, plane: String, mission := "") -> void:
 	f.kill_enemies = args.has("kill_enemies")
 	f.debrief_after = float(args.get("debrief", "-1"))
 	f.approach = args.has("approach")
+	if f.approach and float(args.approach) > 1.0:   # bare --approach = "1": the 8 km default
+		f.approach_dist = float(args.approach)
+	f.approach_high = float(args.get("approach_high", "120"))
+	f.approach_speed = float(args.get("approach_speed", "115"))
 	f.camera_mode = int(args.get("cam", "0"))
 	f.exit_to_menu.connect(show_menu)
 	f.restart.connect(start_flight.bind(area, plane, mission))
