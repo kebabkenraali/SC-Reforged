@@ -148,6 +148,29 @@ func build_mesh(palette: PackedColorArray, lod := 0, smooth_textures := true) ->
 	var ids := triangle_ids_for_lod(lod)
 	var flip := _winding_flip(ids)
 	var groups := {}  # -1 = colour surface, else texture index
+	# Enhanced look: smooth shading across facets that meet at under 50 deg
+	# (round fuselages), hard edges elsewhere (wing edges, wing roots).
+	# Face normals are gathered by vertex POSITION so texture seams do not
+	# break the smoothing. Off = the original flat-shaded facets.
+	var smooth_cos := cos(deg_to_rad(50.0))
+	var corner_faces := {}   # position key -> Array of area-weighted face normals
+	if smooth_textures:
+		for tid in ids:
+			if tid >= triangles.size():
+				continue
+			var tv: Array = triangles[tid].v
+			if tv[0] >= vertices.size() or tv[1] >= vertices.size() or tv[2] >= vertices.size():
+				continue
+			var q0: Vector3 = vertices[tv[0]]
+			var fn: Vector3 = (vertices[tv[1]] - q0).cross(vertices[tv[2]] - q0)
+			if fn.length_squared() < 1e-12:
+				continue
+			fn *= -1.0 if flip else 1.0
+			for vi in tv:
+				var key3 := Vector3i((vertices[vi] * 1000.0).round())
+				if not corner_faces.has(key3):
+					corner_faces[key3] = []
+				corner_faces[key3].append(fn)
 	for tid in ids:
 		if tid >= triangles.size():
 			continue
@@ -175,7 +198,15 @@ func build_mesh(palette: PackedColorArray, lod := 0, smooth_textures := true) ->
 		var col: Color = palette[t.color].srgb_to_linear()
 		for k in order:
 			g.v.append(p[k])
-			g.n.append(n)
+			var vn := n
+			if smooth_textures:
+				var sum := Vector3.ZERO
+				for fn2 in corner_faces.get(Vector3i((p[k] * 1000.0).round()), []):
+					if fn2.normalized().dot(n) > smooth_cos:
+						sum += fn2
+				if sum.length_squared() > 1e-12:
+					vn = sum.normalized()
+			g.n.append(vn)
 			g.c.append(col)
 			if key >= 0:
 				var tx: Dictionary = textures[key]
@@ -223,6 +254,18 @@ func _winding_flip(ids: PackedInt32Array) -> bool:
 
 
 func _material(palette: PackedColorArray, tex_index: int, smooth: bool) -> Material:
+	if smooth and tex_index >= 0 and surface_kind(textures[tex_index].name) == 3:
+		# Spinning propeller: a see-through blur disc instead of a solid board
+		# (the original drew the noise texture opaque).
+		var tx0: Dictionary = textures[tex_index]
+		var disc := StandardMaterial3D.new()
+		disc.albedo_texture = ImageTexture.create_from_image(Palette.to_image(tx0.pixels, tx0.w, tx0.h, palette, 255))
+		disc.albedo_color = Color(0.5, 0.5, 0.5, 0.2)
+		disc.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		disc.cull_mode = BaseMaterial3D.CULL_DISABLED
+		disc.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		disc.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		return disc
 	var mat := ShaderMaterial.new()
 	mat.shader = MODEL_SHADER
 	mat.set_shader_parameter("textured", tex_index >= 0)
@@ -230,6 +273,7 @@ func _material(palette: PackedColorArray, tex_index: int, smooth: bool) -> Mater
 	mat.set_shader_parameter("enhanced", smooth)
 	if tex_index >= 0:
 		var tx: Dictionary = textures[tex_index]
+		mat.set_shader_parameter("kind", surface_kind(tx.name))
 		var img := Palette.to_image(tx.pixels, tx.w, tx.h, palette, 255)
 		img.generate_mipmaps()
 		var tex := ImageTexture.create_from_image(img)
@@ -253,6 +297,22 @@ func _material(palette: PackedColorArray, tex_index: int, smooth: bool) -> Mater
 				tex = ImageTexture.create_from_image(big)
 		mat.set_shader_parameter("albedo_tex", tex)
 	return mat
+
+
+## Material class of a texture from its original name (the naming is
+## consistent across the aircraft set): 0 paint, 1 canopy (TF16CPUP,
+## M21GGCPU, F18PILU, MRJ-CANP ...), 2 exhaust metal (JETEXHST, MISSEXH4,
+## F18EXH, M29-TEXH), 3 propeller.
+static func surface_kind(tex_name: String) -> int:
+	var n := tex_name.to_upper()
+	if n.contains("EXH"):
+		return 2
+	if n.contains("PROP"):
+		return 3
+	for k in ["CPU", "CPS", "CKP", "CANP", "PIL"]:
+		if n.contains(k):
+			return 1
+	return 0
 
 
 ## Number of distinct palette indices, counting stops at `limit`.

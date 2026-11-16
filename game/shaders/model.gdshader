@@ -11,6 +11,7 @@ render_mode cull_disabled;
 uniform bool textured = false;
 uniform bool pixelated = false;
 uniform bool enhanced = false;
+uniform int kind = 0;   // 0 paint, 1 canopy, 2 exhaust metal, 3 propeller (RealSpaceModel.surface_kind)
 uniform sampler2D albedo_tex : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform sampler2D albedo_tex_px : source_color, filter_nearest, repeat_disable;
 
@@ -62,15 +63,41 @@ void fragment() {
 		float n1 = noise(obj_pos * 0.45);
 		float n2 = noise(obj_pos * 2.3);
 		float wear = n1 * 0.65 + n2 * 0.35;
-		base *= mix(0.9, 1.04, wear);
-		// Panel seams.
-		base *= 1.0 - 0.11 * panel_lines(obj_pos, obj_nrm);
-		ALBEDO = base;
-		ROUGHNESS = mix(0.32, 0.6, wear);   // satin paint, rougher where worn
-		METALLIC = 0.05;
-		SPECULAR = 0.55;
-		CLEARCOAT = 0.25;
-		CLEARCOAT_ROUGHNESS = 0.35;
+		float luma = dot(base, vec3(0.299, 0.587, 0.114));
+		if (kind == 1 && luma < 0.22) {
+			// Canopy glass: the dark texels of a canopy texture. Smooth, with a
+			// strong reflection; the paint around the frame falls through below.
+			ALBEDO = base * 0.6;
+			ROUGHNESS = 0.06;
+			METALLIC = 0.0;
+			SPECULAR = 0.9;
+			CLEARCOAT = 1.0;
+			CLEARCOAT_ROUGHNESS = 0.05;
+			RIM = 0.25;
+			RIM_TINT = 0.6;
+		} else if (kind == 2) {
+			// Exhaust nozzle: bare, heat-darkened metal.
+			ALBEDO = base * mix(0.85, 1.0, n2);
+			ROUGHNESS = mix(0.3, 0.5, wear);
+			METALLIC = 0.85;
+		} else if (kind == 3) {
+			ALBEDO = base;
+			ROUGHNESS = 0.45;
+			METALLIC = 0.6;
+		} else {
+			base *= mix(0.9, 1.04, wear);
+			// Panels: each 1.6 m cell is a slightly different shade (separately
+			// painted panels), with faint seams between them.
+			float cell = hash(floor(obj_pos / 1.6) + 7.0);
+			base *= mix(0.965, 1.03, cell);
+			base *= 1.0 - 0.07 * panel_lines(obj_pos, obj_nrm);
+			ALBEDO = base;
+			ROUGHNESS = mix(0.32, 0.6, wear) + (cell - 0.5) * 0.08;   // satin paint, rougher where worn
+			METALLIC = 0.05;
+			SPECULAR = 0.55;
+			CLEARCOAT = 0.25;
+			CLEARCOAT_ROUGHNESS = 0.35;
+		}
 	} else {
 		ALBEDO = base;
 		ROUGHNESS = 0.5;

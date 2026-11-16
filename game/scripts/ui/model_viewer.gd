@@ -6,6 +6,9 @@ const UiTheme = preload("res://scripts/ui/ui_theme.gd")
 signal back
 
 var initial_model := ""
+var zoom := 1.0                 # --view_zoom: camera distance factor (screenshots)
+var spin := true                # --view_still: no auto-rotation (repeatable screenshots)
+var start_orbit := Vector2(0.8, 0.3)   # --view_orbit=yaw,pitch (radians)
 var _list: ItemList
 var _info: Label
 var _lod: SpinBox
@@ -18,6 +21,7 @@ var _current := ""
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_orbit = start_orbit
 	var svc := SubViewportContainer.new()
 	svc.stretch = true
 	svc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -115,7 +119,7 @@ func _show(name: String) -> void:
 	var box: AABB = m.aabb()
 	mi.position = -box.get_center() + Vector3.UP * box.size.y * 0.5
 	_pivot.add_child(mi)
-	_dist = maxf(4.0, box.size.length() * 1.1)
+	_dist = maxf(4.0, box.size.length() * 1.1) * zoom
 	var tris := 0
 	for s in mi.mesh.get_surface_count():
 		tris += mi.mesh.surface_get_array_len(s) / 3
@@ -138,7 +142,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(dt: float) -> void:
-	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	if spin and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_orbit.x += dt * 0.2
 	var h: float = _pivot.get_child(0).mesh.get_aabb().size.y * 0.5 if _pivot.get_child_count() > 0 else 1.0
 	var dir := Vector3(sin(_orbit.x) * cos(_orbit.y), sin(_orbit.y), cos(_orbit.x) * cos(_orbit.y))

@@ -215,6 +215,11 @@ func start_flight(area: String, plane: String, mission := "") -> void:
 func show_viewer() -> void:
 	var v = ModelViewer.new()
 	v.initial_model = args.get("model", "")
+	v.zoom = float(args.get("view_zoom", "1"))
+	v.spin = not args.has("view_still")
+	if args.has("view_orbit"):
+		var o: PackedStringArray = str(args.view_orbit).split(",")
+		v.start_orbit = Vector2(float(o[0]), float(o[1]) if o.size() > 1 else 0.3)
 	v.back.connect(show_menu)
 	_switch(v)
 

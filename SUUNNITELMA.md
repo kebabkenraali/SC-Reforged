@@ -276,10 +276,20 @@ Tehty 16.11.: kun "Smooth textures" on päällä, vähävärisille tekstuureille
 palettiväriä: naamioinnit, merkinnät) tehdään 4× Scale2x-skaalaus palettiväri-indekseille,
 ja `model.gdshader` lisää satiinimaalin, kirkaslakan sekä hennon kulumis- ja
 paneelivaihtelun mallin koordinaateissa. Pois päältä näytetään alkuperäiset pikselit
-entisellä valaistuksella. Ideoita jatkoon: paneelijaon sovitus mallin geometriaan (nyt
-säännöllinen 1,6 m:n ruudukko), konekohtaiset materiaalit (ohjaamon kuomu, pakoputki,
-metalliosat), normaalikartta tekstuurin kirkkaudesta, skaalaus näytönohjaimella, jos
-latausaika kasvaa.
+entisellä valaistuksella.
+
+Tehty 16.11. (2. kierros), samoin vain parannetussa tilassa:
+- Osakohtaiset materiaalit tekstuurin nimestä (`RealSpaceModel.surface_kind`): kuomu
+  (`CPU/CPS/CKP/CANP/PIL`, tummat tekselit kiiltäväksi lasiksi), pakoputki (`EXH`,
+  metalli), potkuri (`PROP`, läpikuultava kiekko).
+- Pehmeät normaalit alle 50°:n tahkokulmissa (pyöreät rungot), terävät reunat muualla.
+- Paneelit: 1,6 m:n solukohtainen sävy- ja karheusvaihtelu, saumat himmeämmät.
+- Mallikatselimen kuvakaappausvalitsimet `--view_zoom`, `--view_still`, `--view_orbit=yaw,pitch`.
+
+Ideoita jatkoon: kuomun tarkistus edestä kuvattuna; potkurien suorakaidemuoto (kiekko
+ei ole pyöreä); paneelijaon sovitus geometriaan; normaalikartta tekstuurin kirkkaudesta;
+skaalaus näytönohjaimella, jos latausaika kasvaa (`smoke_test` 1,3 s → 7,4 s, kun
+kaikki 213 mallia rakennetaan).
 
 ### Vaihe 5: Puuttuvat alkuperäisominaisuudet (backlog, ei järjestyksessä)
 
