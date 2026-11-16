@@ -266,6 +266,21 @@ Hyväksyminen: jokaisella tehtävällä on määritys ja rivi kokoomataulukossa.
 3. Loadout-ruudun testi ja kytkentä (valittu kuorma päätyy koneeseen, rahat vähenevät).
 4. Välianimaatiot: effect-12-valitsimen selvitys, MID1:n jäljitys isommalla budjetilla.
 
+### Lentokonemallien ulkoasu (käyttäjän päätös 16.11.2026)
+
+Nykyaikaiset `.glb`-mallit on arkistoitu (`arkisto/nykyaikaiset_mallit/`). Peli käyttää
+alkuperäisiä RealSpace-malleja, ja niiden skinejä parannetaan ajonaikaisesti; mitään
+alkuperäisdatasta johdettua ei tallenneta levylle.
+
+Tehty 16.11.: kun "Smooth textures" on päällä, vähävärisille tekstuureille (≤ 16
+palettiväriä: naamioinnit, merkinnät) tehdään 4× Scale2x-skaalaus palettiväri-indekseille,
+ja `model.gdshader` lisää satiinimaalin, kirkaslakan sekä hennon kulumis- ja
+paneelivaihtelun mallin koordinaateissa. Pois päältä näytetään alkuperäiset pikselit
+entisellä valaistuksella. Ideoita jatkoon: paneelijaon sovitus mallin geometriaan (nyt
+säännöllinen 1,6 m:n ruudukko), konekohtaiset materiaalit (ohjaamon kuomu, pakoputki,
+metalliosat), normaalikartta tekstuurin kirkkaudesta, skaalaus näytönohjaimella, jos
+latausaika kasvaa.
+
 ### Vaihe 5: Puuttuvat alkuperäisominaisuudet (backlog, ei järjestyksessä)
 
 Ohjaamot (`*-CKPT.IFF`, `COCKPITS/*.PAK`) ja mittarit, siipimieskäskyt ja pelaajan

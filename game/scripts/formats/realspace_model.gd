@@ -227,14 +227,81 @@ func _material(palette: PackedColorArray, tex_index: int, smooth: bool) -> Mater
 	mat.shader = MODEL_SHADER
 	mat.set_shader_parameter("textured", tex_index >= 0)
 	mat.set_shader_parameter("pixelated", not smooth)
+	mat.set_shader_parameter("enhanced", smooth)
 	if tex_index >= 0:
 		var tx: Dictionary = textures[tex_index]
 		var img := Palette.to_image(tx.pixels, tx.w, tx.h, palette, 255)
 		img.generate_mipmaps()
 		var tex := ImageTexture.create_from_image(img)
-		mat.set_shader_parameter("albedo_tex", tex)
 		mat.set_shader_parameter("albedo_tex_px", tex)
+		if smooth:
+			# Enhanced skin: 4x edge-preserving upscale of the palette indices
+			# (Scale2x twice), so linear filtering smooths the edges of the
+			# camouflage shapes instead of blurring them into blotches.
+			# Runtime only - the original texels are never written to disk.
+			# Only flat-colour pixel art (camouflage, markings): noisy photo-like
+			# textures (hangar walls) turn blocky under Scale2x.
+			if not tx.has("px4"):
+				tx["px4"] = []
+				if _colour_count(tx.pixels, 17) <= 16:
+					var p2: Array = _scale2x(tx.pixels, tx.w, tx.h)
+					tx["px4"] = _scale2x(p2[0], p2[1], p2[2])
+			var p4: Array = tx.px4
+			if not p4.is_empty():
+				var big := Palette.to_image(p4[0], p4[1], p4[2], palette, 255)
+				big.generate_mipmaps()
+				tex = ImageTexture.create_from_image(big)
+		mat.set_shader_parameter("albedo_tex", tex)
 	return mat
+
+
+## Number of distinct palette indices, counting stops at `limit`.
+static func _colour_count(src: PackedByteArray, limit: int) -> int:
+	var seen := {}
+	for v in src:
+		if not seen.has(v):
+			seen[v] = true
+			if seen.size() >= limit:
+				break
+	return seen.size()
+
+
+## Scale2x (EPX) on 8-bit palette indices: doubles the size and rounds the
+## staircase edges of pixel art without inventing colours.
+## Returns [pixels, w, h].
+static func _scale2x(src: PackedByteArray, w: int, h: int) -> Array:
+	var w2 := w * 2
+	var out := PackedByteArray()
+	out.resize(w2 * h * 2)
+	for y in h:
+		var row := y * w
+		var up := (y - 1 if y > 0 else y) * w
+		var dn := (y + 1 if y < h - 1 else y) * w
+		for x in w:
+			var p: int = src[row + x]
+			var a: int = src[up + x]
+			var b: int = src[row + (x + 1 if x < w - 1 else x)]
+			var c: int = src[row + (x - 1 if x > 0 else x)]
+			var d: int = src[dn + x]
+			var e0 := p
+			var e1 := p
+			var e2 := p
+			var e3 := p
+			if b != c and a != d:
+				if c == a:
+					e0 = a
+				if a == b:
+					e1 = b
+				if d == c:
+					e2 = c
+				if b == d:
+					e3 = d
+			var o := (y * 2) * w2 + x * 2
+			out[o] = e0
+			out[o + 1] = e1
+			out[o + w2] = e2
+			out[o + w2 + 1] = e3
+	return [out, w2, h * 2]
 
 
 func aabb() -> AABB:
