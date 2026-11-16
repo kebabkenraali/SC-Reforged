@@ -35,7 +35,7 @@ var _cfg := ConfigFile.new()
 
 const DEFAULTS := {
 	"video": {"fullscreen": false, "vsync": true, "msaa": 2, "render_scale": 1.0,
-		"fov": 70.0, "shadows": true, "smooth_textures": true, "fog": true, "ssao": false, "modern_models": true},
+		"fov": 70.0, "shadows": true, "smooth_textures": true, "fog": true, "ssao": false, "modern_models": false},
 	"controls": {"invert_pitch": false, "mouse_flight": false, "mouse_sensitivity": 1.0,
 		"deadzone": 0.12},
 	"audio": {"volume": 0.8, "subtitles": true, "music_on": true, "music": 0.6},
