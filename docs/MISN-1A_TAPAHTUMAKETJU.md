@@ -182,3 +182,17 @@ alustava määritys: tavoite ja tapahtumaketju, reitti/alueet, osat ja niiden
 roolit, onnistumis-/epäonnistumis- ja kampanjaehdot, nykyisen Godot-toteutuksen
 tila sekä tuntemattomat PROG-opkoodit ja testattavat riskit. Harjoittelu- ja
 areenaskenaariot erotellaan kampanjatehtävistä.
+
+## Tarkistus 17.11.2026 (2)
+
+- **Välivideot:** tehtävän 1 vaiheet viittaavat introon MID1, maisemakuviin 5, 12 ja 10
+  sekä kuljetukseen trans0 (myöhemmin 13 ja 3). Kaikki on tallennettu ja toistetaan.
+  Vaiheiden alun efektit `26`, `18` ja `22` ovat tuntemattomia, joten puuttuvaa
+  kohtausta ei voi täysin sulkea pois.
+- **C-130:n nopeus:** mitattu 123 m/s (alaraja 120 m/s). Alkuperäinen PART-nopeus on
+  170 kt = 87 m/s; alaraja laskettu 80 m/s:iin, nyt mitattu 92–97 m/s. Kuljetuskone kaartaa
+  loivasti (kallistus <= ~23°); aiemmin se kallistui reittikaarroissa lähes 90°.
+- **Kohtaamisanimaatio (uusi, remaken oma):** kun saatettava C-130 aktivoituu
+  kohtaamispaikalla, kamera näyttää 7 s ulkokuvan ja pelaajan F-16 sekä hävittäjäsiipimiehet
+  liukuvat muodostelmaan rahtikoneen taakse (`flight_scene.gd _start_joinup`,
+  `camera_rig.gd start_cinematic`). 5/5 täyttä lentoa onnistui animaation kanssa.

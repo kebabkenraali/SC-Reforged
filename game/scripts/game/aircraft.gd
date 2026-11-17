@@ -371,10 +371,18 @@ func _ai(dt: float) -> void:
 		var wp: Vector3 = route[route_index % route.size()]
 		if Vector2(wp.x - global_position.x, wp.z - global_position.z).length() < 1500.0:
 			route_index += 1
-		steer_towards(wp)
 		throttle = 0.8
 		if cruise_speed > 0.0:
+			# Transport: gentle rate-one style turns (<= ~23 deg bank) and a
+			# soft climb/descent towards the waypoint height. The fighter-style
+			# steer_towards rolled the C-130 to ~90 deg in its turns, and its
+			# formation (the MISN-1A join-up) with it.
+			steer_heading(wp, 0.4)
+			var hold: float = maxf(wp.y, (terrain.height_at(global_position.x, global_position.z) + 400.0) if terrain else wp.y)
+			controls.x = clampf((hold - global_position.y) * 0.0015 - velocity.y * 0.03, -0.25, 0.25)
 			throttle = clampf(0.45 + (cruise_speed - speed()) * 0.03, 0.15, 1.0)
+		else:
+			steer_towards(wp)
 		return
 	_ai_timer -= dt
 	if _ai_timer <= 0.0 or global_position.distance_to(_ai_target) < 1500.0:

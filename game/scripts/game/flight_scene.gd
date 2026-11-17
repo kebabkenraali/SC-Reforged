@@ -387,9 +387,10 @@ func _spawn_part(i: int, spawn_pos_override: Variant = null):
 		var a = _spawn(model_name, _pal, _smooth)
 		var spawn_speed: float = maxf(part.speed * 0.5144, 180.0)
 		if _is_transport_model(part.model):
-			# The PART speed is the original cruise (C-130: 170 kt). The floor
+			# The PART speed is the original cruise (C-130: 170 kt = 87 m/s; the
+			# shared F-16 model has ~2x the lift needed at that speed). The floor
 			# keeps it above the shared F-16 flight model's stall speed.
-			a.cruise_speed = maxf(part.speed * 0.5144, 120.0)
+			a.cruise_speed = maxf(part.speed * 0.5144, 80.0)
 			spawn_speed = a.cruise_speed
 		if airborne:
 			var pos: Vector3 = part_pos
@@ -663,6 +664,11 @@ func _activate(id: int) -> void:
 		_link_formations()
 		if n.get("velocity") != null and enemies.has(n):
 			_contact_call(n)
+		# An escorted aircraft joins the flight (MISN-1A: the C-130 at the
+		# Rendezvous): play the join-up with the fighters sliding into formation.
+		if _escort_ids.has(id) and n.get("velocity") != null and player.alive and not player.on_ground \
+				and n.global_position.distance_to(player.global_position) < 20000.0:
+			_start_joinup(n)
 
 
 func _activation_spawn_position(i: int) -> Variant:
@@ -1427,8 +1433,80 @@ func _set_tone(n: String, on: bool) -> void:
 		p.stop()
 
 
+## Join-up cinematic: the escort `lead` has just appeared; the player and the
+## fighter wingmen slide into formation slots behind it (player right, wingman
+## left) while the camera sweeps along the transport. The planes ride on the
+## scripted pose (their physics paused) and leave with the lead's speed and
+## heading. Real time, like the flyby; a camera cycle ends the shot early.
+const JOINUP_LEN := 7.0
+const JOINUP_SLOTS := [Vector3(65.0, 10.0, 85.0), Vector3(-65.0, 10.0, 85.0), Vector3(-120.0, 18.0, 150.0)]
+var _joinup := {}   # {lead, t, planes: [{node, slot, from: Transform3D}]}
+
+func _start_joinup(lead) -> void:
+	var planes := [player]
+	for a in allies:
+		if a != lead and a.alive and not a.on_ground and not _is_transport(a) \
+				and a.global_position.distance_to(lead.global_position) < 25000.0:
+			planes.append(a)
+	var list := []
+	var lb: Basis = lead.global_transform.basis.orthonormalized()
+	for i in mini(planes.size(), JOINUP_SLOTS.size()):
+		var p = planes[i]
+		var slot: Vector3 = JOINUP_SLOTS[i]
+		var from: Transform3D = p.global_transform
+		var slot_world: Vector3 = lead.global_transform.origin + lb * slot
+		if from.origin.distance_to(slot_world) > 700.0:
+			# Too far to slide in on camera: start just out of the shot, behind
+			# and wide of the slot (the original cut between views the same way).
+			from = Transform3D(lb, lead.global_transform.origin + lb * (slot + Vector3(signf(slot.x) * 260.0, 40.0, 420.0)))
+		p.set_physics_process(false)
+		# Kept in the lead's own frame: the slide follows the transport through
+		# its turns (a world-space start drifted away while it banked).
+		var lead_tf: Transform3D = Transform3D(lb, lead.global_transform.origin)
+		list.append({"node": p, "slot": slot, "rel": lead_tf.affine_inverse() * from})
+	_joinup = {"lead": lead, "t": 0.0, "planes": list}
+	if rig != null:
+		rig.start_cinematic(lead, JOINUP_LEN)
+	if hud != null:
+		hud.visible = false
+	_say("Joining up with the %s." % lead.display_name, 4.0)
+	print("JOINUP %s: %d aircraft into formation" % [lead.display_name, list.size()])
+
+
+func _update_joinup(dt: float) -> void:
+	var lead = _joinup.lead
+	_joinup.t += dt / maxf(Engine.time_scale, 0.001)
+	var done: bool = _joinup.t >= JOINUP_LEN or lead == null or not is_instance_valid(lead) or not lead.alive \
+			or (rig != null and not rig.cinematic_active() and _joinup.t > 0.2)
+	var k: float = smoothstep(0.0, 1.0, clampf(_joinup.t / (JOINUP_LEN * 0.85), 0.0, 1.0))
+	for e in _joinup.planes:
+		var p = e.node
+		if not is_instance_valid(p) or not p.alive:
+			continue
+		if lead != null and is_instance_valid(lead) and lead.alive:
+			var lb: Basis = lead.global_transform.basis.orthonormalized()
+			var lead_tf := Transform3D(lb, lead.global_transform.origin)
+			# Slide from the start pose to the slot in the lead's own frame.
+			var rel: Transform3D = e.rel.interpolate_with(Transform3D(Basis(), e.slot), k)
+			p.global_transform = lead_tf * rel
+			if debug_log and Engine.get_physics_frames() % 30 == 0:
+				print("JOINUP t=%.1f k=%.2f %s rel=%s" % [_joinup.t, k, p.display_name, (lead_tf.affine_inverse() * p.global_transform.origin).round()])
+			p.velocity = lead.velocity
+			p.on_ground = false
+		if done:
+			p.set_physics_process(true)
+			if p == player:
+				player.throttle = clampf(player.throttle, 0.5, 0.9)
+	if done:
+		_joinup = {}
+		if hud != null:
+			hud.visible = true
+
+
 func _physics_process(dt: float) -> void:
 	_sim_time += dt
+	if not _joinup.is_empty():
+		_update_joinup(dt)
 	_update_cockpit_audio(dt)
 	_player_input(dt)
 	_update_fast_travel(dt)
@@ -1497,7 +1575,7 @@ func _physics_process(dt: float) -> void:
 					var err := -1.0
 					if a.formation_leader != null and is_instance_valid(a.formation_leader):
 						err = a.global_position.distance_to(a.formation_leader.global_transform * a.formation_offset)
-					wing += " %s agl=%.0f ground=%s takeoff=%s lead=%s slot_err=%.0f" % [a.display_name, a.global_position.y - ga,
+					wing += " %s spd=%.0f agl=%.0f ground=%s takeoff=%s lead=%s slot_err=%.0f" % [a.display_name, a.speed(), a.global_position.y - ga,
 						a.on_ground, a.takeoff, a.formation_leader != null, err]
 				wing += " vars=%s" % vm_vars
 				print("LOG nav=%d/%d dormant=%d scenes=%s flags=%s enemies=%d%s" % [nav_index, waypoints.size(), _dormant.size(),

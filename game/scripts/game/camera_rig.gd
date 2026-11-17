@@ -31,6 +31,7 @@ func _ready() -> void:
 func cycle() -> void:
 	mode = (mode + 1) % 3
 	_flyby_t = -1.0
+	_cine_t = -1.0
 	_first = true
 
 
@@ -63,6 +64,48 @@ func _flyby(dt: float) -> void:
 		_first = true
 
 
+## Cinematic shot around another aircraft (the join-up with the MISN-1A
+## C-130): the camera starts ahead and low on the left of `focus`, sweeps
+## along its side and ends high behind it, looking at the formation slots.
+## Real time, like the flyby. Any camera cycle ends it.
+var _cine_focus: Node3D
+var _cine_t := -1.0
+var _cine_len := 7.0
+
+func start_cinematic(focus: Node3D, duration := 7.0) -> void:
+	_cine_focus = focus
+	_cine_len = duration
+	_cine_t = 0.0
+	_flyby_t = -1.0
+
+
+func cinematic_active() -> bool:
+	return _cine_t >= 0.0
+
+
+func _cinematic(dt: float) -> void:
+	if _cine_focus == null or not is_instance_valid(_cine_focus) or not _cine_focus.alive:
+		_cine_t = -1.0
+		_first = true
+		return
+	_cine_t += dt / maxf(Engine.time_scale, 0.001)
+	var k: float = smoothstep(0.0, 1.0, clampf(_cine_t / _cine_len, 0.0, 1.0))
+	var tx := _cine_focus.global_transform
+	var b := tx.basis.orthonormalized()
+	# Model space: -Z forward, +X right, +Y up.
+	# Behind-left of the transport, drifting up and in: the fighters coming
+	# from behind fly past the camera into their slots. Heading-only frame and
+	# world up, so the shot stays level while the transport banks.
+	var fwd := Vector3(-b.z.x, 0.0, -b.z.z).normalized()
+	var right := fwd.cross(Vector3.UP).normalized()
+	var pos: Vector3 = tx.origin + right * lerpf(-110.0, -55.0, k) + Vector3.UP * lerpf(20.0, 38.0, k) - fwd * lerpf(230.0, 130.0, k)
+	var look: Vector3 = tx.origin + right * 25.0 - fwd * 45.0
+	camera.global_transform = Transform3D(Basis.looking_at(look - pos, Vector3.UP), pos)
+	if _cine_t >= _cine_len:
+		_cine_t = -1.0
+		_first = true
+
+
 func mode_name() -> String:
 	return NAMES[mode]
 
@@ -87,11 +130,14 @@ func _process(dt: float) -> void:
 	var model: Node3D = target.get("model_instance")
 	# During a flyby the camera is outside even if the chosen view is the
 	# cockpit: show the aircraft (it was hidden -> the pass showed empty sky).
-	var outside: bool = mode != Mode.COCKPIT or _flyby_t >= 0.0
+	var outside: bool = mode != Mode.COCKPIT or _flyby_t >= 0.0 or _cine_t >= 0.0
 	if model:
 		model.visible = outside and target.alive
 	if cockpit_model != null:
 		cockpit_model.visible = not outside and target.alive
+	if _cine_t >= 0.0:
+		_cinematic(dt)
+		return
 	if _flyby_t >= 0.0:
 		_flyby(dt)
 		return
