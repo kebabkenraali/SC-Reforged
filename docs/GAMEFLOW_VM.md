@@ -119,6 +119,17 @@ merkitsee kuolleet siipimiehet, `SCOR` kasvattaa kokonaispisteitä.
 raportoi `campaign_report()`:lla rekisterit, menetetyt koneet ja pelaajan pudotukset;
 pausevalikosta poistuminen = keskeytys. Testit: `campaign_test.gd`.
 
+## Ruutujen grafiikka (selvitetty 17.11.2026, toteutus kesken)
+
+- Tappotaulu (`13`, OPTTEST `4b32:0f31`): tausta OPTSHPS-arkiston kuva 0x7b (123), paletti
+  OPTPALS-arkistosta (0x16), numerot fontilla `dataontsoardfnt.shp`. Pilottien nimet
+  ovat ilmeisesti taustakuvassa (ohjelmassa ei ole nimiä teksteinä). Pilotit 1–5 =
+  valittavat siipimiehet (Billy, Gwen, Lyle, Miguel, Tex, WNGS-järjestys), 0 = pelaaja,
+  6–7 ei valittavissa (7:llä suurin aloitussaldo).
+- Kirjanpito (`19`): rivit PREVIOUS CASH, F-16 REPLACEMENT, WEAPONS, CURRENT CASH,
+  PROJ OVERHEAD, PROJ CASH (arvo + "000"), fontti `ledgfont`. Asekatalogi (`17`): fontti
+  `calcfont`; OPTSHPS-kuvat 0x9a–0x9d ladataan `4b36:0f2d`–`0f71`, ja `4b36:1f60` lataa 0x29.
+
 ## Avoinna
 
 - Kirjanpidon, katalogin ja tappotaulun omat ruudut (nyt tekstiviesteinä); katalogiostot

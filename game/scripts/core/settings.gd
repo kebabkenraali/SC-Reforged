@@ -29,6 +29,7 @@ var ACTIONS := {
 	"autopilot_land": ["Autopilot: land at base (F6)", [_key(KEY_F6), _button(JOY_BUTTON_DPAD_RIGHT)]],
 	"next_waypoint": ["Fast travel to waypoint (F7)", [_key(KEY_F7), _button(JOY_BUTTON_RIGHT_STICK)]],
 	"autopilot_combat": ["AI pilot: fly & fight (F8)", [_key(KEY_F8), _button(JOY_BUTTON_LEFT_STICK)]],
+	"auto_land": ["Auto-landing at base (L)", [_key(KEY_L)]],
 }
 
 var _cfg := ConfigFile.new()

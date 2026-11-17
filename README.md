@@ -166,6 +166,7 @@ save is separate (`user://demo_campaign.json`).
 | Countermeasures (flare/chaff) | F | B |
 | Brakes | B | X |
 | Next waypoint (jump) | (configurable) | |
+| Auto-landing at base (animated; not with enemies inside 10 nm) | L | |
 | Cycle camera | C | Y |
 | Pause / menu | Esc | Start |
 | Screenshot | F12 | |
@@ -279,7 +280,9 @@ lock, suitable aspect and a 12 s cooldown (one volley per window).
 loadout is topped up continuously) — useful in long AI playtests.
 `--speed=N` runs the simulation N times faster than real time, `--bomb_run`
 starts from the computed bomb release point, `--approach` from an 8 km final
-approach to the home runway, `--debrief=N` shows the debrief after N seconds,
+approach to the home runway (`--approach=M --approach_high=M --approach_speed=M/S`
+for other starts; negative M = beyond the field), `--autoland` starts the
+animated auto-landing (key L) at once, `--debrief=N` shows the debrief after N seconds,
 and `--log` prints every second the altitude, speed, hull condition and the
 nearest enemy's flight state.
 

@@ -56,6 +56,7 @@ var bomb_run := false         # testing: start at the computed release point for
 var debrief_after := -1.0     # testing: end the mission (as landed) after this many seconds
 var approach := false         # testing: start on final approach to the home runway
 var aborted := false          # campaign: left through the pause menu (original exit code 5)
+var auto_land_test := false   # testing (--autoland): start the auto-landing at once
 var approach_dist := 8000.0   # --approach=M: distance from the threshold
 var approach_high := 120.0    # --approach_high=M: height above the 3 deg slope
 var approach_speed := 115.0   # --approach_speed=M/S
@@ -1560,6 +1561,11 @@ func _update_joinup(dt: float) -> void:
 
 func _physics_process(dt: float) -> void:
 	_sim_time += dt
+	if auto_land_test and _land_anim.is_empty() and player != null and player.alive and not player.on_ground:
+		auto_land_test = false
+		start_auto_land()
+	if not _land_anim.is_empty():
+		_update_auto_land(dt)
 	if not _joinup.is_empty():
 		_update_joinup(dt)
 	_update_cockpit_audio(dt)
@@ -1657,6 +1663,10 @@ func _physics_process(dt: float) -> void:
 func _player_input(dt: float) -> void:
 	if not player.alive:
 		return
+	if Input.is_action_just_pressed("auto_land"):
+		start_auto_land()
+	if not _land_anim.is_empty():
+		return    # the auto-landing flies the aircraft
 
 	# Autopilot toggles (F5 = waypoint, F6 = land, F7 = navpoint jump). F1-F4
 	# are left free for the original discrete camera views.
@@ -2888,6 +2898,171 @@ func campaign_report(success: bool) -> Dictionary:
 		"jets_lost": jets, "kills_air": stats.air_kills, "kills_ground": stats.ground_kills}
 
 
+# --- auto-landing animation (L) -----------------------------------------------
+# A precomputed, physics-free landing: the aircraft follows a fixed path
+# (join the centreline, 3 deg glide, flare, touchdown, roll-out) instead of the
+# flight model, so it cannot balloon or climb away. Far from the field the
+# view cuts to 9 km final first, like the original autopilot's jumps. The
+# original also refused the autopilot with enemies inside 10 nm.
+const AUTOLAND_TOUCHDOWN_SPEED := 72.0
+var _land_anim := {}
+
+func start_auto_land() -> void:
+	if not _land_anim.is_empty() or mission_over or player == null or not player.alive or player.on_ground:
+		return
+	if home_runway == null:
+		_say("Auto-landing: no runway.", 3.0)
+		return
+	if _nearest_active_enemy() < 18520.0:
+		_say("Auto-landing not available: enemies within 10 nm.", 3.0)
+		return
+	var fr := _runway_frame()
+	var t: Vector3 = fr.threshold
+	var dir: Vector3 = fr.dir
+	var tan_gs: float = tan(deg_to_rad(GLIDE_SLOPE))
+	var curve := Curve3D.new()
+	curve.bake_interval = 4.0
+	var p: Vector3 = player.global_position
+	var along: float = (p - t).dot(dir)
+	var final_d := 6000.0
+	var f: Vector3 = t - dir * final_d
+	f.y = t.y + GLIDE_TCH + tan_gs * final_d
+	var start_d := final_d
+	var cut: bool = p.distance_to(f) > 12000.0 or along > -2500.0
+	if cut:
+		# Jump to a 9 km final on the extended centreline.
+		start_d = 9000.0
+		var c: Vector3 = t - dir * start_d
+		c.y = maxf(t.y + GLIDE_TCH + tan_gs * start_d, _ground(c) + 150.0)
+		curve.add_point(c)
+	else:
+		# Smooth join from the present track onto the centreline at 6 km.
+		var h: Vector3 = Vector3(player.velocity.x, 0.0, player.velocity.z)
+		h = h.normalized() if h.length() > 1.0 else Vector3(dir.x, 0.0, dir.z)
+		var k: float = clampf(p.distance_to(f) * 0.4, 800.0, 4000.0)
+		var c1: Vector3 = p + h * k
+		var c2: Vector3 = f - dir * k
+		for i in 40:
+			var u: float = i / 40.0
+			var q: Vector3 = p.bezier_interpolate(c1, c2, f, u)
+			q.y = maxf(q.y, _ground(q) + 120.0)
+			curve.add_point(q)
+	# 3 deg glide down to the threshold crossing height.
+	var d := start_d if cut else final_d
+	d -= 150.0
+	while d > 0.0:
+		var g: Vector3 = t - dir * d
+		g.y = maxf(t.y + GLIDE_TCH + tan_gs * d, _ground(g) + (25.0 if d > 1000.0 else 8.0))
+		curve.add_point(g)
+		d -= 150.0
+	# Flare over the first 300 m, touchdown, roll-out inside the runway.
+	var touchdown: float = 300.0
+	for i in range(1, 7):
+		var u2: float = i / 6.0
+		var fl: Vector3 = t + dir * (touchdown * u2)
+		var gy: float = _ground(fl) + 2.2
+		fl.y = lerpf(t.y + GLIDE_TCH, gy, 1.0 - pow(1.0 - u2, 2.0))
+		curve.add_point(fl)
+	var stop_at: float = maxf(touchdown + 400.0, fr.length - 150.0)
+	var r := touchdown + 100.0
+	while r <= stop_at:
+		var ro: Vector3 = t + dir * r
+		ro.y = _ground(ro) + 2.2
+		curve.add_point(ro)
+		r += 100.0
+	var length: float = curve.get_baked_length()
+	# Arc length of the touchdown point: nearest baked offset to it.
+	var td_point: Vector3 = t + dir * touchdown
+	var s_td: float = curve.get_closest_offset(Vector3(td_point.x, _ground(td_point) + 2.2, td_point.z))
+	_land_anim = {"curve": curve, "s": 0.0, "length": length, "s_td": s_td,
+		"v0": 150.0 if cut else clampf(player.speed(), 110.0, 220.0), "bank": 0.0}
+	player.set_physics_process(false)
+	autopilot = false
+	autopilot_land = false
+	autopilot_waypoint = false
+	if fast_travel:
+		_stop_fast_travel("")
+	if cut and rig != null:
+		rig.start_flyby(3.0)
+	_say("AUTO-LANDING", 4.0)
+	print("AUTOLAND start: path %.0f m, touchdown at %.0f m, cut=%s" % [length, s_td, cut])
+
+
+func _ground(q: Vector3) -> float:
+	return terrain.height_at(q.x, q.z) if terrain else 0.0
+
+
+## Landing end of the home runway: threshold, landing direction, length.
+func _runway_frame() -> Dictionary:
+	var box: AABB = home_runway.mesh_instance.mesh.get_aabb()
+	var xf: Transform3D = home_runway.mesh_instance.global_transform
+	var center: Vector3 = xf * box.get_center()
+	var along_x := box.size.x > box.size.z
+	var axis: Vector3 = (xf.basis * (Vector3.RIGHT if along_x else Vector3.BACK)).normalized()
+	axis.y = 0.0
+	axis = axis.normalized()
+	var half := maxf(box.size.x, box.size.z) * 0.5
+	axis *= _landing_end_sign(center, axis, half)
+	return {"threshold": center + axis * half, "dir": -axis, "length": half * 2.0}
+
+
+func _update_auto_land(dt: float) -> void:
+	var a: Dictionary = _land_anim
+	var curve: Curve3D = a.curve
+	var s: float = a.s
+	var s_td: float = a.s_td
+	var v: float
+	if s < s_td:
+		v = lerpf(a.v0, AUTOLAND_TOUCHDOWN_SPEED, clampf(s / maxf(s_td, 1.0), 0.0, 1.0))
+	else:
+		var decel: float = AUTOLAND_TOUCHDOWN_SPEED * AUTOLAND_TOUCHDOWN_SPEED / (2.0 * maxf(a.length - s_td, 50.0))
+		v = sqrt(maxf(0.0, AUTOLAND_TOUCHDOWN_SPEED * AUTOLAND_TOUCHDOWN_SPEED - 2.0 * decel * (s - s_td)))
+		v = maxf(v, 2.0)
+	s = minf(s + v * dt, a.length)
+	a.s = s
+	var pos: Vector3 = curve.sample_baked(s, true)
+	var ahead: Vector3 = curve.sample_baked(minf(s + 30.0, a.length), true)
+	var behind: Vector3 = curve.sample_baked(maxf(s - 30.0, 0.0), true)
+	var fwd: Vector3 = (ahead - behind)
+	if fwd.length() < 0.1:
+		fwd = -player.global_transform.basis.z
+	fwd = fwd.normalized()
+	# Bank from the turn rate one second ahead.
+	var far: Vector3 = curve.sample_baked(minf(s + maxf(v, 20.0), a.length), true)
+	var far2: Vector3 = curve.sample_baked(minf(s + maxf(v, 20.0) + 30.0, a.length), true)
+	var fwd2: Vector3 = (far2 - far)
+	var bank_target := 0.0
+	if fwd2.length() > 0.1 and s < s_td:
+		var h1 := Vector2(fwd.x, fwd.z).normalized()
+		var h2 := Vector2(fwd2.x, fwd2.z).normalized()
+		var turn: float = h1.angle_to(h2)            # rad per second (look-ahead = 1 s)
+		bank_target = clampf(atan(v * turn / 9.81), -0.5, 0.5)
+	a.bank = lerpf(a.bank, bank_target, clampf(dt * 2.0, 0.0, 1.0))
+	var b := Basis.looking_at(fwd, Vector3.UP)
+	b = Basis(fwd, a.bank) * b
+	# Nose attitude: a few degrees up on the glide, more in the flare, level
+	# on the roll-out.
+	var aoa := 0.08
+	if s > s_td - 400.0 and s < s_td:
+		aoa = lerpf(0.08, 0.15, clampf((s - (s_td - 400.0)) / 400.0, 0.0, 1.0))
+	elif s >= s_td:
+		aoa = lerpf(0.15, 0.0, clampf((s - s_td) / 250.0, 0.0, 1.0))
+	b = Basis(b.x, aoa) * b
+	player.global_transform = Transform3D(b, pos)
+	player.velocity = fwd * v
+	player.on_ground = s >= s_td
+	player.throttle = 0.35 if s < s_td else 0.0
+	player.brakes = s >= s_td
+	player.afterburner = false
+	_was_airborne = true
+	if s >= a.length - 0.5 or (s >= s_td and v <= 2.0):
+		player.velocity = Vector3.ZERO
+		player.on_ground = true
+		player.set_physics_process(true)
+		_land_anim = {}
+		print("AUTOLAND done")
+
+
 ## Ends a mission and shows the debrief. reason: landed / lost / script_failed / quit
 func _end_mission(reason: String) -> void:
 	if mission_over or mission == null:
@@ -2919,7 +3094,8 @@ func _end_mission(reason: String) -> void:
 	d.report = {"result": result, "reason": why, "mission": mission.name, "file": mission_file.get_file().get_basename(),
 		"waypoints": wps, "log": radio_log,
 		"stats": [["Flight time", "%d:%02d" % [int(t) / 60, int(t) % 60]],
-			["Targets destroyed", "%d / %d" % [targets.size() - targets_left(), targets.size()]],
+			["Targets destroyed", "%d / %d" % [targets.filter(func(x): return not x.alive).size(),
+				targets.filter(func(x): return not x.alive).size() + targets_left()]],
 			["Air kills", stats.air_kills], ["Ground kills", stats.ground_kills],
 			["Wingman kills", stats.wingman_air_kills + stats.wingman_ground_kills],
 			["Rounds fired", stats.shots], ["Missiles fired", stats.missiles], ["Bombs dropped", stats.bombs],

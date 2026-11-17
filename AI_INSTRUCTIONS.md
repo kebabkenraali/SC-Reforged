@@ -92,6 +92,9 @@ onnistumisen merkki on "Landed at base" ja runko 100 %.
 - Laskeutumisessa on kaksi korkeusdatumia: liukupolku lasketaan kynnyksestä, mutta
   `agl` paikallisesta maastosta. Nouakchottin ja tukikohdan ympäristössä ero on suuri.
 - Kosketus hyväksytään alle noin 165 m/s (`aircraft.gd`); pehmeä lasku on alle 115 m/s.
+- Pelaajan laskeutuminen on L-näppäimen animaatio (`flight_scene.gd` start_auto_land: ennalta
+  laskettu rata, ei fysiikkaa; testi `--autoland`). Fysiikka-autopilotti (`_autopilot_land`, F6)
+  on yhä testiautopilotin käytössä (`--autopilot`).
 - Kaikilla koneilla on samat F-16:n suoritusarvot. Kuljetuskoneiden nopeutta rajoittaa
   vain `cruise_speed`; uusille konetyypeille rajaus `TRANSPORT_MODELS`-listaan.
 - Pelilogiikan ajastukset simulaatioajalla (`_sim_time`), ei `Time.get_ticks_msec()`:llä.
