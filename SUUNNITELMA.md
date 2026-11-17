@@ -171,6 +171,15 @@ Hyväksyminen: puhdas `git status`, `Aja_Testit.ps1` ajaa koko sarjan yhdellä k
 
 ### Vaihe 1: M1 takaisin, laskeutuminen täydestä lennosta
 
+**TEHTY 17.11.2026: M1 saavutettu.** `Aja_Testit.ps1 -Taydet 5`: 5/5 täyttä MISN-1A-lentoa
+`result=success`, runko 100 %, siipimiehet 2/2, skriptin oma "Mission accomplished" joka
+lennossa. Korjaukset (`flight_scene.gd _autopilot_land`): kiitotien pää valitaan maaston
+mukaan ja lukitaan (pohjoispään edessä kumpare 24 m liukupolun yllä); liukupolku kynnyksen
+korkeudesta (ei paikallisesta AGL:stä) ja 15 m ylityskorkeus; pystysäädin lentoradan kulmalle
+(vaimennus ~0,1 -> ~0,5); keskilinjan seuranta ja lähestymiskartio; go-around liukupolun
+korkeudella ja vapautus 8,5 km:ssä; väärältä puolelta tuleva kone kiertää. Pikatoisto:
+`--approach=M --approach_high=M --approach_speed=M/S`.
+
 Lähtötieto: vika on rajattu vaiheeseen 3 ja siirtymään commitiin, ei koko ohjaukseen.
 Aiemmat laajat uudelleenkirjoitukset (LINEUP/GLIDE, pattern-portit) epäonnistuivat,
 joten muutos pidetään pienenä.

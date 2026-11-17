@@ -65,6 +65,19 @@ func _initialize() -> void:
 		await c.activate(fly)
 		_check("briefing conversation 11 before flying", host.conversations.has(11), str(host.conversations))
 		_check("flies mission 0 (MISN-1A)", host.flights == [0], str(host.flights))
+		# After the flight the campaign enters the stage named by 0d (stage 1),
+		# which records the result in flag 72 (20 0 -> set, else clear).
+		_check("successful flight -> stage 1, flag 72 set", c.stage == 1 and c.flags.get(72, false),
+			"stage %d flags %s" % [c.stage, c.flags.keys()])
+		# A failed flight continues the campaign too (as in the original data).
+		var c2 = Campaign.new()
+		var host2 := FakeHost.new()
+		host2.succeed = false
+		c2.host = host2
+		await c2.start_new()
+		await c2.activate(fly)
+		_check("failed flight -> stage 1 too, flag 72 clear", c2.stage == 1 and not c2.flags.get(72, false),
+			"stage %d flags %s results %s" % [c2.stage, c2.flags.keys(), c2.results])
 
 	# Requirements: a sprite needing flag (value 1) is hidden until the flag is set.
 	var req := {"requires": [[1, 0x28]], "effects": []}

@@ -115,7 +115,9 @@ func enter_stage(index: int) -> void:
 
 ## Condition effects: when one fails, the following effects are skipped up to
 ## the matching 1e (else) or 1f (endif), as in OPTTEST.EXE's interpreter.
-const CONDITIONS := [0x09, 0x0a, 0x14, 0x15, 0x16, 0x1c, 0x20, 0x23, 0x25]
+## (16 "fly" is NOT a condition: the original continues the campaign after a
+## failed flight too - the next stage reads the result with 20 n.)
+const CONDITIONS := [0x09, 0x0a, 0x14, 0x15, 0x1c, 0x20, 0x23, 0x25]
 
 
 ## Runs an effect list; awaits conversations, cut-scenes and flights.
@@ -124,6 +126,7 @@ func run(effects: Array) -> void:
 	var skip := false        # inside a branch whose condition failed
 	var depth := 0           # conditions nested inside the skipped branch
 	var all_of := 0          # 21 n: the next n effects are conditions that must all hold
+	var flown := false       # a 16 flight ran in this list -> go to the next stage at the end
 	var i := 0
 	while i < effects.size():
 		var op: int = effects[i][0]
@@ -182,6 +185,25 @@ func run(effects: Array) -> void:
 			0x10, 0x11:
 				save()
 				message.emit("Progress is saved automatically.")
+			0x16:
+				# Fly the selected mission. Decoded from GAMEFLOW: every stage
+				# names its successor on entry (0d n) and the flight leads there
+				# whatever the result - stage 1 starts with "20 0" (did mission 0
+				# succeed?) and sets flag 72 for the later conversations; stage 2
+				# names itself and re-enters with flag 40 set by the "06 40" that
+				# follows its flight. The argument of 16 is not understood yet.
+				if mission < 0:
+					continue
+				var r = await host.fly_mission(mission)
+				if r == null:
+					busy = false      # not flown (backed out of the loadout screen)
+					return
+				results[mission] = 1 if r else 2
+				flown = true
+				if r and Demo.enabled() and mission >= Demo.LAST_MISSION:
+					host.end_demo()
+					busy = false
+					return
 			0x12:
 				await host.play_transport(arg)
 			0x13:
@@ -191,6 +213,11 @@ func run(effects: Array) -> void:
 			0x19:
 				message.emit("Ledger is not available yet.")
 	busy = false
+	if flown:
+		var target: int = gameflow().stage_index(next_stage) if next_stage >= 0 else stage + 1
+		if target >= 0 and target < gameflow().stages.size():
+			await enter_stage(target)
+			save()   # progress after every flight (the original saved in the barracks)
 
 
 func _condition(op: int, arg: int) -> bool:
@@ -203,15 +230,6 @@ func _condition(op: int, arg: int) -> bool:
 			return answer
 		0x15:
 			return not answer
-		0x16:
-			# fly the selected mission; a failed flight skips the rest
-			if mission < 0:
-				return false
-			var ok: bool = await host.fly_mission(mission)
-			results[mission] = 1 if ok else 2
-			if ok and Demo.enabled() and mission >= Demo.LAST_MISSION:
-				host.end_demo()
-			return ok
 		0x20:
 			return int(results.get(arg, 0)) == 1
 		0x1c:

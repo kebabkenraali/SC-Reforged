@@ -31,8 +31,8 @@ on git-historiassa commitissa `2aca5e2`: `git show 2aca5e2:AI_INSTRUCTIONS.md`.
 - Yksikkötestit vihreitä, loppulähestyminen (`--approach`) laskeutuu.
 - MISN-1A:n tehtäväosuus toimii (vaihe 2): skriptin oma onnistumispolku 3/3, siipimies ja
   C-130 selviävät.
-- **Täysi MISN-1A-autopilottilento ei laskeudu (0/3).** Kone osuu maahan noin 600 m ennen
-  kynnystä. M1 ei ole saavutettu. Korjaus on suunnitelman vaihe 1.
+- **M1 saavutettu 17.11.:** täysi MISN-1A-autopilottilento 5/5 onnistui (`Aja_Testit.ps1 -Taydet 5`).
+- Kampanja etenee lennon jälkeen seuraavaan vaiheeseen myös epäonnistumisen jälkeen (GAMEFLOW).
 
 ## Testaus
 

@@ -34,6 +34,10 @@ signal mission_result(success: bool)    # campaign mode: leave the debrief
 
 const Debrief = preload("res://scripts/ui/debrief.gd")
 const GLIDE_SLOPE := 3.0          # degrees
+## Threshold crossing height of the landing autopilot's glide path (m). A path
+## from the threshold itself left no margin over the ground 500 m short of the
+## MISN-1A runway (8 m above threshold level): full flights hit it.
+const GLIDE_TCH := 15.0
 
 var area := "CANYON"
 var plane_model := "OBJECTS/F-16DES.IFF"
@@ -1912,8 +1916,18 @@ func _autopilot_waypoint() -> void:
 ## Direct pitch-rate vertical-speed command: rotate the nose until the
 ## wanted vertical speed is met; used by the landing autopilot phases,
 ## since the FBW stick cannot command a deeper than trim-default sink.
-func _ap_vs_pitch(vs_cmd: float, k := 0.1, lmt := 0.45) -> void:
-	var rate: float = clampf((vs_cmd - player.velocity.y) * k, -lmt, lmt)
+##
+## `k` is the gain on the FLIGHT-PATH ANGLE error (1/s). The old law used
+## k on the vertical-speed error (0.08 per m/s = ~13/s in path angle at
+## 160 m/s); with the ~1.5 s lag from pitch to flight path that loop had a
+## damping ratio of ~0.1 and slammed between +-0.42 rad/s on every approach
+## that did not start on the slope (vs -35 .. +13 m/s, crash short of the
+## runway in every full MISN-1A flight). k ~0.8 gives a damping ratio ~0.5.
+func _ap_vs_pitch(vs_cmd: float, k := 0.8, lmt := 0.3) -> void:
+	var v: float = maxf(player.speed(), 50.0)
+	var gamma: float = asin(clampf(player.velocity.y / v, -1.0, 1.0))
+	var gamma_c: float = asin(clampf(vs_cmd / v, -0.5, 0.5))
+	var rate: float = clampf((gamma_c - gamma) * k, -lmt, lmt)
 	player.pitch_rate_override = rate
 	_ap_pr_cmd = rate
 	player.controls.x = 0.0
@@ -2004,7 +2018,7 @@ func _autopilot_land() -> void:
 	var to_thresh: Vector3 = threshold - player.global_position
 	var dist_2d: float = Vector2(to_thresh.x, to_thresh.z).length()
 	var agl: float = player.global_position.y - terrain.height_at(player.global_position.x, player.global_position.z)
-	var target_agl: float = tan(deg_to_rad(GLIDE_SLOPE)) * dist_2d
+	var target_agl: float = GLIDE_TCH + tan(deg_to_rad(GLIDE_SLOPE)) * dist_2d
 	# Commit target: a point on the runway axis always ahead of the plane
 	# (a fixed overrun point ends up behind after the crossed threshold and
 	# the bank-only turn then spins 180 in place instead of landing).
@@ -2014,10 +2028,17 @@ func _autopilot_land() -> void:
 	# power. Keeps the 3-degree interception stable: the flight model's
 	# throttle/trim equilibrium has a sinking bias, and the old point-steering
 	# flip-flopped between climb and dive (phugoid).
-	var gs_err: float = agl - target_agl
+	# One datum: the glide slope is a line above the THRESHOLD, so the error is
+	# measured from the threshold height, not from the ground under the plane.
+	# (With the local AGL, terrain 60-200 m below the field on the MISN-1A
+	# approach read as "high" -> dive, then rising ground read as "low".)
+	# The local ground only acts as a safety floor (terrain_floor below).
+	var h: float = player.global_position.y - threshold.y
+	var gs_err: float = h - target_agl
+	var terrain_floor: float = minf(target_agl, 40.0 + dist_2d * 0.02)
 	var glide_power: float = clampf(0.55 + 0.4 * clampf(-gs_err / 150.0, -0.35, 1.0), 0.2, 0.95)
-	_ap_debug = "land d=%.0f agl=%.0f tgt=%.0f pw=%.2f spd=%.0f cs=%.2f pr=%.2f pit=%.2f vs=%.1f gr=%s" % [
-		dist_2d, agl, target_agl, glide_power, player.speed(),
+	_ap_debug = "land d=%.0f h=%.0f agl=%.0f tgt=%.0f pw=%.2f spd=%.0f cs=%.2f pr=%.2f pit=%.2f vs=%.1f gr=%s" % [
+		dist_2d, h, agl, target_agl, glide_power, player.speed(),
 		player.controls.x, _ap_pr_cmd,
 		player.global_transform.basis.get_euler().x,
 		player.velocity.y, str(player.on_ground)]
@@ -2028,6 +2049,13 @@ func _autopilot_land() -> void:
 	player.brakes = false
 	# Along-track position: < 0 on the approach side, > 0 past the threshold.
 	var along: float = (player.global_position - threshold).dot(dir)
+	# Lateral offset from the extended centreline and the approach cone the
+	# final phases need: outside it the plane goes back to phase 1, which
+	# joins the line 6.5+ km out (a plane 1 km off the line at the threshold
+	# used to "commit" and dive into the ground beside the runway).
+	var lat: float = (player.global_position - threshold).dot(side)
+	var on_cone: bool = absf(lat) < 300.0 + absf(along) * 0.12
+	_ap_debug += " along=%.0f lat=%.0f" % [along, lat]
 	var closing: bool = Vector2(player.velocity.x, player.velocity.z).dot(Vector2(to_thresh.x, to_thresh.z)) > 0.0
 	# Missed approach: too high or too low on final, flown past the threshold,
 	# or heading away inside the final-approach zone. Fly out and re-enter.
@@ -2039,15 +2067,20 @@ func _autopilot_land() -> void:
 		# touchdown instead of climbing away into the desert.
 		var overflown: bool = along > 2600.0 and agl > 160.0
 		var leaving: bool = along < 0.0 and dist_2d > 1500.0 and not closing
-		if too_high or too_low or overflown or leaving:
+		# Arriving from the far side of the field (the landing end is fixed
+		# by terrain clearance): fly the pattern round instead of landing
+		# against the runway direction.
+		var wrong_way: bool = along > -2500.0 and Vector2(player.velocity.x, player.velocity.z).dot(Vector2(dir.x, dir.z)) < 0.0
+		if too_high or too_low or overflown or leaving or wrong_way:
 			_ap_goaround = true
 			_say("Go around.", 3.0)
-	if _ap_goaround and (along > 5500.0 or along < -6500.0):
-		# Clear once the plane is past the flown-out point (7 km pattern) or
-		# has flown back inside 6.5 km on the approach side: the normal
-		# approach re-starts from there.
+	if _ap_goaround and along < -8500.0:
+		# Clear only beyond the 7.5 km gate zone on the approach side: the
+		# turn back onto the line then happens in phase 1, which has no gates.
+		# (Clearing at 6.5 km re-armed the "leaving" gate at once and the
+		# plane looped the pattern until the timeout.)
 		_ap_goaround = false
-	if dist_2d > 7500.0 or _ap_goaround:
+	if dist_2d > 7500.0 or _ap_goaround or not on_cone:
 		# Terrain first: the approach line can run below hills between the
 		# plane and the base.
 		if _terrain_pullup_needed():
@@ -2057,36 +2090,49 @@ func _autopilot_land() -> void:
 		var alt: float
 		var ground_here: float = terrain.height_at(player.global_position.x, player.global_position.z)
 		if _ap_goaround:
-			# Out to a point 7 km down the approach line, 700 m above the
-			# field: a single pattern loop at landing speed costs ~100 s.
-			approach_pos = threshold - dir * 7000.0
-			alt = maxf(threshold.y + 700.0, ground_here + 500.0)
+			# Out to a point 9 km down the approach line, 700 m above the
+			# field (released at 8.5 km, see above).
+			approach_pos = threshold - dir * 9000.0
+			# At the glide slope's height at the release point (+80 m), so the
+			# plane comes back onto the line instead of 200-350 m above it
+			# (the old fixed 700 m re-triggered "too high" -> endless loops).
+			alt = maxf(threshold.y + GLIDE_TCH + tan(deg_to_rad(GLIDE_SLOPE)) * 9000.0 + 80.0, ground_here + 300.0)
 		else:
 			# Aim 3 km ahead along the extended centreline (towards the field):
 			# aiming at the abeam point (same distance) puts the target right
 			# under the plane once it is on the line, and the turn then
 			# circles forever (dive-zoom-stall loop, never lands).
-			var aim_d: float = maxf(dist_2d - 3000.0, 6500.0)
-			approach_pos = threshold - dir * aim_d + side * lat_m
+			# Pursue a centreline point 5 km ahead of the plane's own along-track
+			# position (>= the ~3.4 km turn radius at 185 m/s): the old 3 km lead
+			# overshot the line and swung 5-6 km out to the side.
+			var aim_d: float = maxf(-(along + 5000.0), 3500.0) if absf(along) < dist_2d + 1.0 and along < 0.0 else maxf(dist_2d - 3000.0, 6500.0)
+			approach_pos = threshold - dir * aim_d
 			# On the glide slope at the plane's own distance (+40 m), so phase 2
 			# starts on the slope; never closer than 300 m to the ground below.
 			alt = maxf(threshold.y + target_agl + 40.0, ground_here + 300.0)
 		# Level-bank turn + vertical-speed hold: point-steering (steer_towards)
 		# banks 77 deg and zooms at a target behind the plane (stall loops).
 		_ap_level_to(approach_pos, alt, 0.8, 170.0)
-		_ap_debug += " ga=%s along=%.0f" % [_ap_goaround, along]
+		_ap_debug += " ga=%s cone=%s" % [_ap_goaround, on_cone]
 		return
 	# Phase 2: Final approach (3-7.5 km): dead-centre line with the
 	# vertical-speed controller (a stable glide hand-off; the point-steering
 	# variant oscillated between climb and dive). Pitch is driven through the
 	# fly-by-wire stick (load factor): its neutral-trim automatically holds
 	# the flight path even banked, so no manual bank compensation needed.
-	if dist_2d > 3000.0:
-		player.steer_heading(center, 0.5)
+	# Phases are gated by the distance ALONG the centreline, and the lateral
+	# steering pursues a point on the centreline ahead of the plane: steering
+	# at the runway centre let a plane that came out of the pattern turn
+	# a few hundred metres off the line cross the threshold abeam (never
+	# inside 500 m of it, so no touchdown) and go around for ever.
+	if along < -3000.0:
+		player.steer_heading(threshold + dir * (along + 2500.0), 0.5)
 		# Nominal glide sink (-v sin 3 deg, ~8 m/s at 150 m/s) plus a
 		# correction: below the slope (gs_err < 0) -> sink less.
 		var vs_cmd: float = -player.speed() * sin(deg_to_rad(GLIDE_SLOPE)) + clampf(-gs_err / 12.0, -10.0, 7.0)
-		_ap_vs_pitch(vs_cmd, 0.08, 0.42)
+		if agl < terrain_floor:
+			vs_cmd = maxf(vs_cmd, (terrain_floor - agl) * 0.5)
+		_ap_vs_pitch(vs_cmd, 0.8, 0.3)
 		_ap_autothrottle(160.0)   # bleed to the short-final speed
 		player.afterburner = false
 		return
@@ -2095,10 +2141,12 @@ func _autopilot_land() -> void:
 	# < 165 m/s but < 115 m/s counts as a gentle landing, and the fast touches
 	# (160 m/s) used to swing the tail out on the flare. The speed bleeds under
 	# the autothrottle; brakes bite only on a real overspeed (+10 m/s).
-	if dist_2d > 500.0:
-		player.steer_heading(center, 0.35)
+	if along < -500.0:
+		player.steer_heading(threshold + dir * (along + 1500.0), 0.35)
 		var vs_cmd2: float = -player.speed() * sin(deg_to_rad(GLIDE_SLOPE)) + clampf(-gs_err / 8.0, -8.0, 5.0)   # above the slope -> sink more
-		_ap_vs_pitch(vs_cmd2, 0.08, 0.42)
+		if agl < terrain_floor:
+			vs_cmd2 = maxf(vs_cmd2, (terrain_floor - agl) * 0.5)
+		_ap_vs_pitch(vs_cmd2, 0.8, 0.3)
 		_ap_autothrottle(145.0)   # touchdown window: the ground model accepts < 140 m/s
 		player.afterburner = false
 		return
@@ -2106,10 +2154,12 @@ func _autopilot_land() -> void:
 	# machinery: line up with the runway, push the sink through the last metres
 	# and touch down. Widened from 60 m so a slightly high short final still
 	# lands on the strip instead of floating past it into a go-around.
-	if (agl <= 110.0 or dist_2d < 600.0) and (along > -600.0 or dist_2d < 600.0 or gs_err < -25.0):
+	# (The old "or below the slope by 25 m" clause committed a low plane early
+	# and pushed it down harder - into the ground short of the runway.)
+	if along > -600.0:
 		player.steer_heading(overrun, 0.15)
 		var sink: float = clampf((agl - 2.5) * 0.35 + 0.9, 1.2, 8.0)   # brisk high, gentle low
-		_ap_vs_pitch(-sink, 0.04, 0.2)   # gentle rate; the FBW override would dive at full error
+		_ap_vs_pitch(-sink, 0.6, 0.2)   # gentle rate near the ground
 		player.throttle = 0.04
 		player.brakes = false
 		player.afterburner = false
@@ -2119,7 +2169,7 @@ func _autopilot_land() -> void:
 	if agl > 25.0:
 		player.steer_heading(overrun, 0.2)
 		var vs_cmd3: float = clampf((5.0 - agl) / 12.0, -3.0, 2.0)
-		_ap_vs_pitch(vs_cmd3, 0.1, 0.4)
+		_ap_vs_pitch(vs_cmd3, 0.8, 0.3)
 		_ap_autothrottle(115.0)
 		player.afterburner = false
 		return
@@ -2586,12 +2636,11 @@ func landing_info() -> Dictionary:
 	axis = axis.normalized()
 	var half := maxf(box.size.x, box.size.z) * 0.5
 	var width := minf(box.size.x, box.size.z)
-	# Land from the end nearest the aircraft (horizontal only: a plane directly
-	# above the runway must not flip the axis), rolling towards the far end.
-	var to_player: Vector3 = player.global_position - center
-	var flat: Vector3 = Vector3(to_player.x, 0.0, to_player.z)
-	if flat.dot(axis) < 0.0:
-		axis = -axis
+	# Land from the end with the clear approach (see _landing_end_sign), fixed
+	# for the whole flight. Picking the end nearest the aircraft sent every
+	# full MISN-1A flight over a hump that rises 24 m above the 3 deg slope
+	# just before the north threshold.
+	axis *= _landing_end_sign(center, axis, half)
 	var threshold: Vector3 = center + axis * half
 	var dir := -axis
 	var rel: Vector3 = player.global_position - threshold
@@ -2605,6 +2654,34 @@ func landing_info() -> Dictionary:
 	return {"distance": dist, "gs_error": player.global_position.y - ideal,
 		"loc_error": rel.dot(side), "corners": corners, "runway": "%02d" % int(roundf(hdg / 10.0)) if roundf(hdg / 10.0) > 0 else "36",
 		"threshold": threshold}
+
+
+## Which runway end to land from: +1 / -1 along `axis`. The end whose 3 deg
+## glide slope (0.3-10 km out) keeps the most clearance over the terrain
+## wins; computed once per runway and kept for the flight, so the approach
+## does not flip while the plane manoeuvres around the field.
+var _land_end := {}   # runway node -> sign
+func _landing_end_sign(center: Vector3, axis: Vector3, half: float) -> float:
+	if _land_end.has(home_runway):
+		return _land_end[home_runway]
+	var best_sign := 1.0
+	var best_clear := -1e9
+	for s in [1.0, -1.0]:
+		var thr: Vector3 = center + axis * s * half
+		var worst := 1e9
+		var d := 300.0
+		while d <= 10000.0:
+			var p: Vector3 = thr + axis * s * d
+			var slope_y: float = thr.y + tan(deg_to_rad(GLIDE_SLOPE)) * d
+			worst = minf(worst, slope_y - (terrain.height_at(p.x, p.z) if terrain else 0.0))
+			d += 100.0
+		if worst > best_clear:
+			best_clear = worst
+			best_sign = s
+	_land_end[home_runway] = best_sign
+	if debug_log or DisplayServer.get_name() == "headless":
+		print("LANDING: runway end %+d, min glide-slope clearance %.0f m" % [best_sign, best_clear])
+	return best_sign
 
 
 ## Testing: 8 km final, slightly high and left, heading for the home runway.
@@ -2624,13 +2701,9 @@ func _setup_approach() -> void:
 	axis = axis.normalized()
 	var half := maxf(box.size.x, box.size.z) * 0.5
 	var side: Vector3 = axis.cross(Vector3.UP).normalized()
-	# pick the end: the aircraft is still on the ground/at the base — take the
-	# end whose approach side has more clearance (use the mission start side:
-	# the player's start position defines the home direction).
-	var towards: Vector3 = _player_start.get("pos", center) if _player_start.has("pos") else center
-	var flat_start: Vector3 = Vector3(towards.x - center.x, 0.0, towards.z - center.z)
-	if flat_start.dot(axis) < 0.0:
-		axis = -axis
+	# The same end the landing autopilot uses (terrain clearance), so this
+	# test flies the approach a full mission really gets.
+	axis *= _landing_end_sign(center, axis, half)
 	var threshold_end: Vector3 = center + axis * half
 	var pos: Vector3 = center + axis * (half + approach_dist) - side * 60.0
 	pos.y = threshold_end.y + tan(deg_to_rad(GLIDE_SLOPE)) * approach_dist + approach_high

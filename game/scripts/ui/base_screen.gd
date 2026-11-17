@@ -362,11 +362,14 @@ func play_transport(n: int) -> void:
 	v.queue_free()
 
 
-func fly_mission(n: int) -> bool:
+## Returns true / false = flown, succeeded or not; null = not flown (no such
+## mission, or the player backed out of the loadout screen): the campaign
+## then stays in the current stage.
+func fly_mission(n: int) -> Variant:
 	var files: Array = campaign.mission_files()
 	if n < 0 or n >= files.size():
 		toast("Mission %d is not available." % n)
-		return true
+		return null
 	
 	_pending_mission_file = files[n]
 	
@@ -383,7 +386,7 @@ func fly_mission(n: int) -> bool:
 		var went: bool = await _loadout_done
 		if not went:
 			# The player backed out of the loadout screen: the mission is not flown.
-			return true
+			return null
 		campaign._pending_loadout = _selected_loadout
 	
 	# Fly the mission and wait for it to finish before continuing the campaign.

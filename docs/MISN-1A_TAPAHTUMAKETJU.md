@@ -143,6 +143,37 @@ lennolla: liput 6, 7, 12, 14 ja Strike Basen "Mission accomplished". Yksityiskoh
 - SPOT 9–11 (alue -1, ±150 ft / 50000 ft) ovat todennäköisesti suhteellisia siirtymiä
   (muodostelma/sivuun ohjaus), eivät karttapisteitä.
 
+## 3. Lennon jälkeen (tutkittu 17.11.2026)
+
+Lähteet: GAMEFLOW.IFF (vaiheet 0–9 purettu), ohjekirja (`docs/SC_MANUAL.txt`: tukikohta,
+toimisto, kirjanpito, keskeytys) ja Playtester's Guide (Mauritania 1).
+
+**Kampanjan eteneminen (toteutettu 17.11.):**
+- Jokainen vaihe nimeää heti alussa seuraajansa (`0d n`). Lento (`16`) vie aina siihen,
+  **myös epäonnistuneen lennon jälkeen**. Vaihe 1 alkaa `20 0` (onnistuiko tehtävä 0?) ja
+  asettaa tai tyhjentää lipun 72, jonka mukaan myöhemmät keskustelut valitaan (vaiheen 1
+  Stern-keskustelu 15/16, vaiheen 2 keskustelut 19–22).
+- Vaihe 2 nimeää itsensä (`0d 2`): lennon jälkeen se palaa itseensä, ja lennon perään
+  ajettu `06 40` avaa kuljetusauton (sprite 18), joka vie vaiheeseen 3. Lippu 40
+  asetetaan myös epäonnistumisen jälkeen; vaihe käsittelee tuloksen haarallaan.
+- Remake käsitteli `16`:ta ehtona eikä vaihtanut vaihetta lennon jälkeen, joten
+  kampanja jäi vaiheeseen 0. Korjattu `campaign.gd`:ssä, testi `campaign_test.gd`.
+- `16 n`:n argumentti (1, 2, 5, 1, 8, 5, 6 vaiheissa 0–8) ei ole vaiheen numero.
+  Merkitys avoin.
+
+**Tunnistettu, ei vielä toteutettu:**
+- Lennon jälkeen avautuvat vaiheet (1, 2, 5, 7, 8) sisältävät aina efektit `1a 0` ja
+  `24 0`: todennäköisesti tehtävän jälkikäsittely (palkkio, kirjanpito, tappotaulu).
+- Ohjekirja: toimistossa Virgil kertoo talouden tilan, kirjanpito (`19`) näyttää
+  kassan, kulut ja ennustetut kulut tehtävää kohden ("jos kassa menee miinukselle, Wildcats
+  on mennyttä"), tappotaulu (`13`) vertaa pilotteja. Opas: MISN-1A:n palkkio
+  $2,5 miljoonaa; C-130:n menetys = epäonnistuminen.
+- Ohjekirja, keskeytys: *restart*, *abort* (takaisin tukikohtaan kuin tehtävää ei olisi
+  lennetty) ja *continue* (tukikohtaan kuin tehtävä olisi päättynyt siihen).
+- Ohjekirja, autopilotti: ei voi autopilotoida pois toiminta-alueelta ennen kuin
+  viholliset on hoidettu tai 10 nm:n päässä. Remaken pikamatka katkeaa uhkaan, mutta tätä
+  rajoitusta ei ole.
+
 ## Jatko muiden tehtävien kanssa
 
 Kun MISN-1A:n C-130-spawnaus, reitti, tehtävän onnistumisehdot ja kotiinlasku on
