@@ -33,6 +33,7 @@ signal restart
 signal mission_result(success: bool)    # campaign mode: leave the debrief
 
 const Debrief = preload("res://scripts/ui/debrief.gd")
+const FEET_M := 0.3048         # metres per foot (original units are feet)
 const GLIDE_SLOPE := 3.0          # degrees
 ## Threshold crossing height of the landing autopilot's glide path (m). A path
 ## from the threshold itself left no margin over the ground 500 m short of the
@@ -720,6 +721,24 @@ func _node_for(id: int):
 
 
 # --- host interface for MissionVM ------------------------------------------
+# The original interpreter (STRIKE.EXE, see docs/PROG_VM.md) keeps one
+# mission-wide variable array: "flags" are variables holding 0 / 1.
+
+var _vm_states := {}      # owner key -> {acc, e, cond}: persists between ticks
+var _vm_regs := {}        # mission registers 0..7 (14 n), read by the engine
+var _vm_globals := {}     # op -> last argument (0f, d0, c0, 94, 99 ... not decoded)
+var _vm_list_flags := {}  # 80 / 81 / 82 n state bytes
+var _vm_waits := {}       # owner key -> a0 timer start (sim seconds)
+
+func vm_state(key: int) -> Dictionary:
+	if not _vm_states.has(key):
+		_vm_states[key] = {"acc": 0, "e": 0, "cond": 0}
+	return _vm_states[key]
+
+
+func vm_block(n: int) -> Array:
+	return mission.block(n) if mission != null and n >= 0 and n < mission.blocks.size() else []
+
 
 func vm_var(n: int) -> int:
 	return vm_vars.get(n, 0)
@@ -729,12 +748,27 @@ func vm_set_var(n: int, v: int) -> void:
 	vm_vars[n] = v
 
 
-func vm_flag(n: int) -> bool:
-	return flags.get(n, false)
+func vm_set_register(n: int, v: int) -> void:
+	_vm_regs[n] = v
 
 
-func vm_set_flag(n: int, v: bool) -> void:
-	flags[n] = v
+func vm_global(op: int, arg: int) -> void:
+	_vm_globals[op] = arg
+	# b6/b7, b8/b9: set / clear object bits 0x10 / 0x20 of part `arg`.
+	if op in [0xb6, 0xb7, 0xb8, 0xb9]:
+		var n = _node_for(arg)
+		if n != null:
+			var bit: int = 0x10 if op in [0xb6, 0xb7] else 0x20
+			var bits: int = n.get_meta("sc_bits", 0)
+			n.set_meta("sc_bits", (bits | bit) if op in [0xb6, 0xb8] else (bits & ~bit))
+
+
+func vm_list_flag(n: int, on: bool) -> void:
+	_vm_list_flags[n] = on
+
+
+func vm_list_flag_get(n: int) -> bool:
+	return _vm_list_flags.get(n, false)
 
 
 func vm_alive(id: int) -> bool:
@@ -745,6 +779,75 @@ func vm_alive(id: int) -> bool:
 		return true
 	var n = _node_for(id)
 	return n != null and n.alive
+
+
+## 92 alive / 93 destroyed / 98 present in the world (the original tests
+## object bit 0 / bit 1 of its state byte and its world-entity pointer).
+func vm_part_state(op: int, id: int) -> bool:
+	var i: int = mission.part_index(id)
+	if i < 0:
+		return false
+	var n = _node_for(id)
+	match op:
+		0x92:
+			return vm_alive(id)
+		0x93:
+			return n != null and not n.alive and not n.get_meta("removed", false)
+		0x98:
+			return n != null and n.alive and not _scene_wait.has(i) and not _dormant.has(i)
+	return false
+
+
+## Script owner usable for actions / distances: alive and in the world.
+func vm_owner_ready(key: int) -> bool:
+	if key < 0:
+		return false
+	var n = _node_for(key)
+	return n != null and n.alive
+
+
+## 95 id: 3D distance owner -> part, 96 id: altitude of part, 97 n: 3D
+## distance owner -> SPOT n. Original units: 1000 ft (positions are 24.8
+## fixed-point feet; the engine divides the length by 1000 and shifts by 8),
+## capped at 255. No owner (or no target) gives 0, like the original.
+func vm_measure(key: int, op: int, arg: int) -> int:
+	if op == 0x96:
+		var t = _node_for(arg)
+		if t == null:
+			return 0
+		return mini(int((t.global_position.y / FEET_M - 2250.0) / 100.0), 255)
+	var owner = _node_for(key) if key >= 0 else null
+	if owner == null:
+		return 0
+	var target: Vector3
+	if op == 0x97:
+		if arg < 0 or arg >= mission.spots.size():
+			return 0
+		target = mission.spots[arg]
+	else:
+		var i: int = mission.part_index(arg)
+		if i < 0:
+			return 0
+		# A scene ship still waiting in its area is far away (not "here").
+		if _scene_wait.has(i):
+			return 255
+		var t2 = _node_for(arg)
+		if t2 == null:
+			return 0
+		target = t2.global_position
+	return mini(int(owner.global_position.distance_to(target) / FEET_M / 1000.0), 255)
+
+
+## a0 k: wait k seconds on the owner's timer (the original restarts the
+## timer on the next a0 once it has run out).
+func vm_wait(key: int, secs: int) -> bool:
+	if not _vm_waits.has(key):
+		_vm_waits[key] = _sim_time
+		return secs <= 0
+	if _sim_time - _vm_waits[key] >= secs:
+		_vm_waits.erase(key)
+		return true
+	return false
 
 
 func vm_activate(id: int) -> void:
@@ -792,28 +895,42 @@ func vm_end(success: bool) -> void:
 
 
 ## Starts an action for the owner unless it is already the current one.
-func vm_action(key: int, op: int, arg: int) -> void:
+## `extra` is the "09 x" argument that follows the instruction (not used yet).
+## Decoded actions: a1 take off, a2 land at SPOT, a3/a4/a5/ac fly to SPOT,
+## a7 attack, a8 escort, aa follow. a9, b1-b5 and bf are accepted but not
+## decoded yet (they finish at once).
+func vm_action(key: int, op: int, arg: int, extra := -1) -> void:
 	var cur = _actions.get(key)
 	if cur != null and cur.op == op and cur.arg == arg:
 		return
-	_actions[key] = {"op": op, "arg": arg, "t0": _sim_time}
+	_actions[key] = {"op": op, "arg": arg, "extra": extra, "t0": _sim_time}
+	if debug_log:
+		print("VMACT key=%d op=%02x arg=%d extra=%d" % [key, op, arg, extra])
 	var a = _node_for(key) if key >= 0 else null
 	if a == null or a.get("velocity") == null:
+		return
+	if not op in [0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xac, 0xa7, 0xa8, 0xaa]:
 		return
 	a.takeoff = false
 	a.attack_ids = []
 	a.route = []
 	a.route_index = 0
 	a.formation_leader = null
+	a.land_at = null
 	match op:
 		0xa1:
 			a.takeoff = a.on_ground
 			var pi: int = mission.part_index(key)
 			if pi >= 0 and mission.parts[pi].leader == mission.player_id:
 				a.takeoff_after = player
-		0xa2, 0xa5, 0xa6:
+		0xa2, 0xa3, 0xa4, 0xa5, 0xac:
 			if arg < mission.spots.size():
 				a.route = [mission.spots[arg]]
+				if op == 0xa2:
+					# A real approach: the original checks its script conditions
+					# while the landing runs (MISN-1A's "We're safe").
+					var sp: Vector3 = mission.spots[arg]
+					a.land_at = Vector3(sp.x, terrain.height_at(sp.x, sp.z) if terrain else sp.y, sp.z)
 		0xa7:
 			a.attack_ids = [arg]
 		0xa8, 0xaa:
@@ -828,93 +945,29 @@ func vm_action_done(key: int) -> bool:
 		return true
 	var a = _node_for(key) if key >= 0 else null
 	match act.op:
-		0xa0:
-			return _sim_time - act.t0 >= act.arg
 		0xa1:
 			if a == null or a.get("velocity") == null:
 				return true
 			var g: float = terrain.height_at(a.global_position.x, a.global_position.z) if terrain else 0.0
 			return not a.on_ground and a.global_position.y - g > 200.0
-		0xa2, 0xa5, 0xa6:
+		0xa2, 0xa3, 0xa4, 0xa5, 0xac:
 			if a == null or act.arg >= mission.spots.size():
 				return true
 			var sp: Vector3 = mission.spots[act.arg]
-			var close := Vector2(sp.x - a.global_position.x, sp.z - a.global_position.z).length() < 1500.0
-			if close and act.op == 0xa2:
-				vm_remove(key)       # landed
-			return close
+			var flat := Vector2(sp.x - a.global_position.x, sp.z - a.global_position.z).length()
+			if act.op == 0xa2:
+				# Landed: over the spot and down near the ground.
+				var g2: float = terrain.height_at(a.global_position.x, a.global_position.z) if terrain else 0.0
+				if flat < 1500.0 and a.global_position.y - g2 < 120.0:
+					vm_remove(key)
+					return true
+				return false
+			return flat < 1500.0
 		0xa7:
 			return not vm_alive(act.arg)
 		0xa8, 0xaa:
 			return not vm_alive(act.arg)
 	return true
-
-
-## Mission VM host interface: parameter pushes (opcodes 21, 24, 25, 2e, 2f).
-## The pushed value is consumed by a following `14 n` (var n = pop) or `50 n`.
-## Only 2e is partially decoded: it pushes its argument (the mission parameter
-## constant, e.g. "2e 19, 50 06" -> var6 = 25 in MISN-4C, "2e 64" -> var1 = 100
-## of the reward/threshold kind in every mission opening block).
-## For the others the parameter-table source is still unknown; the argument
-## is pushed so that the consuming ops see the right shape of value.
-func vm_query_param(key: int, op: int, arg: int) -> int:
-	return arg
-
-
-## Mission VM host interface: object queries (opcodes 93, 95, 97, 98).
-## These query properties of a target object (by part id) and push onto stack.
-## Semantics decoded from usage across all missions (tools/prog_analyze.gd):
-##   93 = target is flying (alive and off the ground)      -> 0 / 1
-##   95 = horizontal distance owner -> target, whole miles
-##        (compared with 1, 2, 5, 10: runway "landed" checks at < 1, AI attack
-##         orders at < 10, mayday radio at < 5)
-##   97 = open (always compared >= 5); push 0 for now
-##   98 = target is on the ground (parked / landed)        -> 0 / 1
-##        (93 true && 98 false gates "activate backups", 14A blk2 checks the
-##         opposite to mark the player as down: 93 false && 98 true)
-func vm_query_object(key: int, op: int, arg: int) -> int:
-	var target_idx: int = mission.part_index(arg) if arg >= 0 else -1
-	if target_idx < 0:
-		return 0
-	var target_node = _node_for(arg)
-	# A scene ship waiting in its area is alive but far away: distance
-	# queries must not read 0 ("right here") - MISN-1A's cargo then reported
-	# the attack begun and over before the MiGs existed.
-	if _scene_wait.has(target_idx) and (op == 0x95 or op == 0x97):
-		return 255
-	if target_node == null or not target_node.alive:
-		match op:
-			0x93:
-				return 0    # destroyed: not flying
-			0x98:
-				return 1    # destroyed: on the ground
-			_:
-				return 0    # distance / heading unknown
-	if op == 0x93:
-		return 0 if target_node.on_ground else 1
-	if op == 0x98:
-		return 1 if target_node.on_ground else 0
-
-	var target_part: Dictionary = mission.parts[target_idx]
-	var target_pos: Vector3 = target_node.global_position if target_node.get("global_position") else target_part.pos
-
-	match op:
-		0x95:  # Horizontal distance owner -> target, in whole miles
-			var owner_node = _node_for(key) if key >= 0 else null
-			if owner_node != null and owner_node.get("global_position"):
-				var owner_pos: Vector3 = owner_node.global_position
-				var d := Vector2(owner_pos.x - target_pos.x, owner_pos.z - target_pos.z).length()
-				return int(d / 1852.0)
-			return 0
-		0x97:  # Distance owner -> target in whole nautical miles (3D).
-			# Was decoded as heading*256; both uses (MISN-1A blk 7, MISN-1C
-			# blk 5) are "97 id, 40 05, 4b skip, 52 flag" = set the flag
-			# once the target is within 5 NM (the attack has begun).
-			var owner2 = _node_for(key) if key >= 0 else null
-			if owner2 != null and owner2.get("global_position"):
-				return int(owner2.global_position.distance_to(target_pos) / 1852.0)
-			return 255
-	return 0
 
 
 ## Scene "on enter" blocks run when the player first comes within the area.
@@ -1575,11 +1628,14 @@ func _physics_process(dt: float) -> void:
 					var err := -1.0
 					if a.formation_leader != null and is_instance_valid(a.formation_leader):
 						err = a.global_position.distance_to(a.formation_leader.global_transform * a.formation_offset)
-					wing += " %s spd=%.0f agl=%.0f ground=%s takeoff=%s lead=%s slot_err=%.0f" % [a.display_name, a.speed(), a.global_position.y - ga,
-						a.on_ground, a.takeoff, a.formation_leader != null, err]
+					var land_d: float = -1.0
+					if a.get("land_at") is Vector3:
+						land_d = Vector2(a.land_at.x - a.global_position.x, a.land_at.z - a.global_position.z).length()
+					wing += " %s spd=%.0f agl=%.0f ground=%s takeoff=%s lead=%s slot_err=%.0f route=%d land_d=%.0f atk=%s" % [a.display_name, a.speed(), a.global_position.y - ga,
+						a.on_ground, a.takeoff, a.formation_leader != null, err, a.route.size(), land_d, a.attack_point != null]
 				wing += " vars=%s" % vm_vars
 				print("LOG nav=%d/%d dormant=%d scenes=%s flags=%s enemies=%d%s" % [nav_index, waypoints.size(), _dormant.size(),
-					_scene_entered, flags.keys(), enemies.size(), wing])
+					_scene_entered, vm_vars.keys().filter(func(k): return vm_vars[k] == 1), enemies.size(), wing])
 			if not _snd.is_empty():
 				print("LOG audio engine=%s pitch=%.2f vol=%.0fdB ab=%.0fdB warning=%s lock=%s 3d_players=%d" % [_snd.engine.playing,
 					_snd.engine.pitch_scale, _snd.engine.volume_db, _snd.afterburner.volume_db, _snd.warning.playing,

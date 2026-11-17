@@ -8,7 +8,9 @@ on git-historiassa commitissa `2aca5e2`: `git show 2aca5e2:AI_INSTRUCTIONS.md`.
 1. **`SUUNNITELMA.md`**: todennettu tila, vaiheet ja hyväksymisehdot. Aloita tästä.
 2. Tämä tiedosto: komennot, säännöt ja tunnetut ansat.
 3. `README.md`: mitä on toteutettu, ohjaus, komentorivivalitsimet.
-4. `docs/TIEDOSTOFORMAATIT.md` (dataformaatit ja PROG-opkoodit),
+4. **`docs/PROG_VM.md`**: tehtäväskriptien tulkki purettuna alkuperäisestä STRIKE.EXE:stä
+   (17.11.2026). Ohittaa TIEDOSTOFORMAATIT.md:n vanhat PROG-opkooditulkinnat.
+   `docs/TIEDOSTOFORMAATIT.md` (dataformaatit),
    `docs/MISN-1A_TAPAHTUMAKETJU.md` (ensimmäisen tehtävän skripti),
    `docs/GODOT_PORT_PLAN.md` (ominaisuusmatriisi).
 
@@ -102,8 +104,10 @@ onnistumisen merkki on "Landed at base" ja runko 100 %.
 - Saattokohteet (`a8` pelaajan puolelta) luokitellaan ystäviksi sivutavusta riippumatta.
 - VOCLIST-äänitiedoston nimen etuliite on puhuja (`AI` = pelaaja, `ST` = Stern), ei tehtävä.
 - Pelaajan route-blokin `ab n` on reittipisteen teksti, ei radiolähetys.
-- Opkoodin `97` merkityksestä koodin kommentti ja dokumentit ovat ristiriidassa
-  (etäisyys vai avoin). Tarkista toteutus ennen kuin nojaat siihen.
+- Alkuperäisen pelin purku: purkulistaukset vain paikallisesti (`docs/DEKOMPILU/` on
+  .gitignoressa); projektiin kirjataan vain omin sanoin kirjoitetut havainnot.
+- PROG-tulkki on akkumulaattorikone, ja liput ovat samoja muuttujia (ks. `docs/PROG_VM.md`).
+  `97 n` = etäisyys SPOTiin n, yksikkö 1000 ft. Älä palauta vanhoja pinokonetulkintoja.
 
 ## Työkalut
 

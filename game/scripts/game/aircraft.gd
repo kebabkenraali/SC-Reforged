@@ -74,6 +74,10 @@ var takeoff_after: Node3D       # wait for this aircraft (the flight lead) to ge
 ## Route cruise speed in m/s (0 = no limit). Every aircraft shares the F-16
 ## physics, so transports need this or they fly their route at fighter speed.
 var cruise_speed := 0.0
+## Ground point of a script landing (action a2) or null: the route then glides
+## down to it instead of holding the waypoint height.
+var land_at = null
+var _behind_dir := 0       # steer_heading: turn direction kept while the aim is behind
 
 var model_instance: MeshInstance3D
 var _ai_target := Vector3.ZERO
@@ -369,7 +373,8 @@ func _ai(dt: float) -> void:
 		return
 	if not route.is_empty():
 		var wp: Vector3 = route[route_index % route.size()]
-		if Vector2(wp.x - global_position.x, wp.z - global_position.z).length() < 1500.0:
+		# A landing keeps its target (no "reached, next point" turn-back orbit).
+		if land_at == null and Vector2(wp.x - global_position.x, wp.z - global_position.z).length() < 1500.0:
 			route_index += 1
 		throttle = 0.8
 		if cruise_speed > 0.0:
@@ -378,9 +383,19 @@ func _ai(dt: float) -> void:
 			# steer_towards rolled the C-130 to ~90 deg in its turns, and its
 			# formation (the MISN-1A join-up) with it.
 			steer_heading(wp, 0.4)
-			var hold: float = maxf(wp.y, (terrain.height_at(global_position.x, global_position.z) + 400.0) if terrain else wp.y)
-			controls.x = clampf((hold - global_position.y) * 0.0015 - velocity.y * 0.03, -0.25, 0.25)
+			var ground_here: float = terrain.height_at(global_position.x, global_position.z) if terrain else 0.0
+			var hold: float = maxf(wp.y, ground_here + 400.0)
+			if land_at is Vector3:
+				# Landing (script action a2): a ~3.5 deg glide down to the spot's
+				# ground, never closer than 30 m to the terrain on the way.
+				var flat: float = Vector2(land_at.x - global_position.x, land_at.z - global_position.z).length()
+				hold = maxf(land_at.y + minf(flat * 0.06, 600.0), ground_here + 30.0)
+			# Climb / sink limited to +5 / -6 m/s: the unlimited height law
+			# swung the C-130 between 400 and 1100 m AGL at 96..150 m/s.
+			var vs_cmd: float = clampf((hold - global_position.y) * 0.05, -6.0, 5.0)
+			controls.x = clampf((vs_cmd - velocity.y) * 0.03, -0.25, 0.25)
 			throttle = clampf(0.45 + (cruise_speed - speed()) * 0.03, 0.15, 1.0)
+			brakes = speed() > cruise_speed + 12.0
 		else:
 			steer_towards(wp)
 		return
@@ -399,7 +414,9 @@ func _ai(dt: float) -> void:
 ## the hillside (Stern hit the ground in every MISN-1A run). Pulls out when
 ## the path 3 s ahead, or the height while sinking fast, gets too low.
 func _terrain_escape() -> bool:
-	if terrain == null or on_ground:
+	# A script landing (land_at) glides down on purpose; its glide keeps its
+	# own 30 m terrain floor (this 400 m pull-up kept the C-130 from landing).
+	if terrain == null or on_ground or land_at != null:
 		return false
 	var ahead: Vector3 = global_position + velocity * 3.0
 	var g: float = maxf(terrain.height_at(ahead.x, ahead.z), terrain.height_at(global_position.x, global_position.z))
@@ -483,7 +500,17 @@ func steer_heading(aim: Vector3, max_bank := 0.5) -> void:
 	if to.length() < 1.0:
 		to = -b.z
 	var local := b.transposed() * to.normalized()
-	var desired_bank := clampf(atan2(local.x, -local.z) * 2.0, -max_bank, max_bank)
+	var ang := atan2(local.x, -local.z)
+	# Target (nearly) straight behind: keep one turn direction until it is in
+	# front again. The sign of local.x flipped every frame there and the plane
+	# flew straight away from a point it had just overflown.
+	if absf(ang) > 2.4:
+		if _behind_dir == 0:
+			_behind_dir = 1 if local.x >= 0.0 else -1
+		ang = _behind_dir * PI
+	elif absf(ang) < 1.6:
+		_behind_dir = 0
+	var desired_bank := clampf(ang * 2.0, -max_bank, max_bank)
 	var bank := -b.get_euler().z
 	controls.y = clampf((desired_bank - bank) * 2.0, -1.0, 1.0)
 	controls.x = 0.0

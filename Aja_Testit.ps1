@@ -39,9 +39,12 @@ $viat = 0
 
 function Kaynnista([string]$nimi, [string[]]$argit) {
 	$kaikki = @('--headless', '--path', "`"$game`"") + $argit
-	return Start-Process -FilePath $engine -ArgumentList $kaikki -PassThru -WindowStyle Hidden `
+	$p = Start-Process -FilePath $engine -ArgumentList $kaikki -PassThru -WindowStyle Hidden `
 		-RedirectStandardOutput (Join-Path $lokit "$nimi.out") `
 		-RedirectStandardError (Join-Path $lokit "$nimi.err")
+	# PS 5.1: the exit code is only kept when the handle is opened at start.
+	$null = $p.Handle
+	return $p
 }
 
 function Odota($p, [int]$sekunnit) {
