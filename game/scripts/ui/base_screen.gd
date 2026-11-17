@@ -362,38 +362,44 @@ func play_transport(n: int) -> void:
 	v.queue_free()
 
 
-## Returns true / false = flown, succeeded or not; null = not flown (no such
-## mission, or the player backed out of the loadout screen): the campaign
-## then stays in the current stage.
+## Gameflow effect 16: the weapon-loading screen. True when the player
+## chooses to fly (the original's cockpit hotspot), false when they go back
+## to the base. The flight itself starts after the effect list (fly_mission).
+func choose_loadout(n: int) -> bool:
+	var files: Array = campaign.mission_files()
+	if n < 0 or n >= files.size():
+		toast("Mission %d is not available." % n)
+		return false
+	# Automated runs (headless testing or --autopilot) skip the interactive
+	# loadout screen and fly with the aircraft's default weapons.
+	var automated := DisplayServer.get_name() == "headless" 		or OS.get_cmdline_user_args().has("--autopilot")
+	if automated:
+		campaign._pending_loadout = null
+		return true
+	_show_loadout_screen(files[n])
+	var went: bool = await _loadout_done
+	if went:
+		campaign._pending_loadout = _selected_loadout
+	return went
+
+
+## Flies mission n (after choose_loadout). Returns true / false = succeeded
+## or not; null = no such mission (the campaign then stays in its stage).
 func fly_mission(n: int) -> Variant:
 	var files: Array = campaign.mission_files()
 	if n < 0 or n >= files.size():
 		toast("Mission %d is not available." % n)
 		return null
-	
 	_pending_mission_file = files[n]
-	
-	# Automated runs (headless testing or --autopilot) skip the interactive
-	# loadout screen and fly with the aircraft's default weapons. Interactive
-	# play shows the weapon-loading screen after the briefing, as in the
-	# original game.
-	var automated := DisplayServer.get_name() == "headless" \
-		or OS.get_cmdline_user_args().has("--autopilot")
-	if automated:
-		campaign._pending_loadout = null
-	else:
-		_show_loadout_screen(files[n])
-		var went: bool = await _loadout_done
-		if not went:
-			# The player backed out of the loadout screen: the mission is not flown.
-			return null
-		campaign._pending_loadout = _selected_loadout
-	
-	# Fly the mission and wait for it to finish before continuing the campaign.
 	fly_requested.emit(_pending_mission_file)
 	_pending_mission_file = ""
 	var ok: bool = await flight_done
 	return ok
+
+
+## Gameflow effect 18 n: base-screen music (sequence n of GAMEFLOW.ADL).
+func play_music(n: int) -> void:
+	Music.play("SOUND/GAMEFLOW.ADL", -1, n, true)
 
 
 func _show_loadout_screen(mission_file: String) -> void:

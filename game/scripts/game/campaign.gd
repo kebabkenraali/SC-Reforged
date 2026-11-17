@@ -24,6 +24,7 @@ var stage := 0                  # index into gameflow.stages
 var screen := -1                # current base screen id
 var flags := {}                 # flag id -> bool
 var next_stage := -1
+var _pending_fly := false
 var mission := -1               # mission number selected by 0c
 var wingman := ""
 var results := {}               # mission number -> 1 succeeded / 2 failed (read by 20 n)
@@ -114,10 +115,11 @@ func enter_stage(index: int) -> void:
 
 
 ## Condition effects: when one fails, the following effects are skipped up to
-## the matching 1e (else) or 1f (endif), as in OPTTEST.EXE's interpreter.
-## (16 "fly" is NOT a condition: the original continues the campaign after a
-## failed flight too - the next stage reads the result with 20 n.)
-const CONDITIONS := [0x09, 0x0a, 0x14, 0x15, 0x1c, 0x20, 0x23, 0x25]
+## the matching 1e (else) or 1f (endif). Decoded from the original interpreter
+## (OPTTEST.EXE 0xb916, see docs/GAMEFLOW_VM.md): the condition ops are
+## 09 0a 14 15 16 1c 20 23 25 (and 27-2a, unused). 16 is the weapon-loading
+## screen: true when the player clicks the cockpit to fly.
+const CONDITIONS := [0x09, 0x0a, 0x14, 0x15, 0x16, 0x1c, 0x20, 0x23, 0x25]
 
 
 ## Runs an effect list; awaits conversations, cut-scenes and flights.
@@ -126,7 +128,10 @@ func run(effects: Array) -> void:
 	var skip := false        # inside a branch whose condition failed
 	var depth := 0           # conditions nested inside the skipped branch
 	var all_of := 0          # 21 n: the next n effects are conditions that must all hold
-	var flown := false       # a 16 flight ran in this list -> go to the next stage at the end
+	# Pending "fly" command (the original's +0xe8 = 1, set by 16 / 03 / 0e):
+	# the flight starts only after the whole effect list has run, so effects
+	# after 16 (stage 2's "06 40") happen before the flight, whatever its result.
+	_pending_fly = false
 	var i := 0
 	while i < effects.size():
 		var op: int = effects[i][0]
@@ -185,25 +190,14 @@ func run(effects: Array) -> void:
 			0x10, 0x11:
 				save()
 				message.emit("Progress is saved automatically.")
-			0x16:
-				# Fly the selected mission. Decoded from GAMEFLOW: every stage
-				# names its successor on entry (0d n) and the flight leads there
-				# whatever the result - stage 1 starts with "20 0" (did mission 0
-				# succeed?) and sets flag 72 for the later conversations; stage 2
-				# names itself and re-enters with flag 40 set by the "06 40" that
-				# follows its flight. The argument of 16 is not understood yet.
-				if mission < 0:
-					continue
-				var r = await host.fly_mission(mission)
-				if r == null:
-					busy = false      # not flown (backed out of the loadout screen)
-					return
-				results[mission] = 1 if r else 2
-				flown = true
-				if r and Demo.enabled() and mission >= Demo.LAST_MISSION:
-					host.end_demo()
-					busy = false
-					return
+			0x03:
+				mission = arg
+				_pending_fly = true
+			0x0e:
+				_pending_fly = true
+			0x18:
+				if host.has_method("play_music"):
+					host.play_music(arg)
 			0x12:
 				await host.play_transport(arg)
 			0x13:
@@ -213,7 +207,18 @@ func run(effects: Array) -> void:
 			0x19:
 				message.emit("Ledger is not available yet.")
 	busy = false
-	if flown:
+	if _pending_fly and mission >= 0:
+		_pending_fly = false
+		# The original writes op2misn.iff, hands over to STRIKE.EXE and comes
+		# back with misn2op.iff: then the stage named by 0d starts, whatever
+		# the result (stage 1 reads it with "20 0" -> flag 72).
+		var r = await host.fly_mission(mission)
+		if r == null:
+			return
+		results[mission] = 1 if r else 2
+		if r and Demo.enabled() and mission >= Demo.LAST_MISSION:
+			host.end_demo()
+			return
 		var target: int = gameflow().stage_index(next_stage) if next_stage >= 0 else stage + 1
 		if target >= 0 and target < gameflow().stages.size():
 			await enter_stage(target)
@@ -222,6 +227,14 @@ func run(effects: Array) -> void:
 
 func _condition(op: int, arg: int) -> bool:
 	match op:
+		0x16:
+			# Weapon-loading screen (argument: loadout set, not decoded).
+			if mission < 0:
+				return false
+			var go: bool = await host.choose_loadout(mission) if host.has_method("choose_loadout") else true
+			if go:
+				_pending_fly = true
+			return go
 		0x09:
 			return not flags.get(arg, false)
 		0x0a:

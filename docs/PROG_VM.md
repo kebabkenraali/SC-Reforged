@@ -111,5 +111,4 @@ koska alkuperäinen tarkistaa skriptiehtoja laskeutumisen aikana.
   `09`-lisäargumentti tarkoittaa kullekin toiminnolle (esim. `a5 07, 09 0b`).
 - Mitkä moottorin osat lukevat tehtävärekistereitä (`14 n`), tilabittejä 0x10/0x20 (`b6`–`b9`)
   ja globaaleja tavuja (`d0`, `0f`), sekä mikä lista on `80`–`82`:n kohde.
-- Kampanjan GAMEFLOW-tulkki OPTTEST.EXE:ssä (efektit `16 n`:n argumentti, `18`, `1a`, `22`,
-  `24`, `26`): sama menetelmä (hyppytaulukon haku) pitäisi toimia.
+- Kampanjan GAMEFLOW-tulkki on purettu erikseen: `docs/GAMEFLOW_VM.md`.

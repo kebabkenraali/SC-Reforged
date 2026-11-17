@@ -253,7 +253,8 @@ lentänyt tehtävän kerran itse.
 **Pohjatyö 17.11.2026:** tehtäväskriptien tulkki on purettu alkuperäisestä STRIKE.EXE:stä ja
 toteutettu uudelleen (`docs/PROG_VM.md`). Kohdan 5 opkoodiselvitys on siten pääosin tehty;
 auki ovat toimintojen `a9`, `b1`–`b5`, `bf` merkitykset, `09`-lisäargumentit ja
-GAMEFLOW-tulkki (OPTTEST.EXE).
+GAMEFLOW-tulkin talousosat (kassa, palkkiot, peli ohi); itse tulkki on purettu
+(`docs/GAMEFLOW_VM.md`).
 
 1. Aja `game/tools/mission_chain.gd` kaikille `MISSIONS/*.IFF`-tiedostoille. Raaka
    tuloste jää `tmp/`:iin (alkuperäistä tekstiä, ei jaeta).

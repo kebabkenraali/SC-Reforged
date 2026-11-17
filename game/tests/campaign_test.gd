@@ -10,6 +10,14 @@ class FakeHost:
 	var cutscenes := []
 	var flights := []
 	var succeed := true
+	var go := true
+	var music := []
+
+	func choose_loadout(_n: int) -> bool:
+		return go
+
+	func play_music(n: int) -> void:
+		music.append(n)
 
 	func play_conversation(n: int) -> void:
 		conversations.append(n)
@@ -46,6 +54,7 @@ func _initialize() -> void:
 	await c.start_new()
 	_check("stage 0 opens the hangar (screen 11)", c.screen == 11, str(c.screen))
 	_check("stage 0 plays cut-scene 5", host.cutscenes.has(5), str(host.cutscenes))
+	_check("stage 0 starts music 0 (18 0)", host.music.has(0), str(host.music))
 
 	var sprites: Array = c.screen_sprites()
 	var fly = null
@@ -69,6 +78,15 @@ func _initialize() -> void:
 		# which records the result in flag 72 (20 0 -> set, else clear).
 		_check("successful flight -> stage 1, flag 72 set", c.stage == 1 and c.flags.get(72, false),
 			"stage %d flags %s" % [c.stage, c.flags.keys()])
+		# Backing out of the loadout screen (16 false): no flight, same stage.
+		var c3 = Campaign.new()
+		var host3 := FakeHost.new()
+		host3.go = false
+		c3.host = host3
+		await c3.start_new()
+		await c3.activate(fly)
+		_check("loadout refused -> no flight, stage 0", host3.flights.is_empty() and c3.stage == 0,
+			"flights %s stage %d" % [host3.flights, c3.stage])
 		# A failed flight continues the campaign too (as in the original data).
 		var c2 = Campaign.new()
 		var host2 := FakeHost.new()

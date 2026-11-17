@@ -10,6 +10,7 @@ on git-historiassa commitissa `2aca5e2`: `git show 2aca5e2:AI_INSTRUCTIONS.md`.
 3. `README.md`: mitä on toteutettu, ohjaus, komentorivivalitsimet.
 4. **`docs/PROG_VM.md`**: tehtäväskriptien tulkki purettuna alkuperäisestä STRIKE.EXE:stä
    (17.11.2026). Ohittaa TIEDOSTOFORMAATIT.md:n vanhat PROG-opkooditulkinnat.
+   **`docs/GAMEFLOW_VM.md`**: kampanjan efektitulkki purettuna OPTTEST.EXE:stä.
    `docs/TIEDOSTOFORMAATIT.md` (dataformaatit),
    `docs/MISN-1A_TAPAHTUMAKETJU.md` (ensimmäisen tehtävän skripti),
    `docs/GODOT_PORT_PLAN.md` (ominaisuusmatriisi).
