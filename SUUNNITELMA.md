@@ -317,8 +317,12 @@ kirkkaudesta; skaalaus näytönohjaimella, jos latausaika haittaa.
 
 Ohjaamot (`*-CKPT.IFF`, `COCKPITS/*.PAK`) ja mittarit, siipimieskäskyt ja pelaajan
 radiovalikko, lentomallin parametrit `DYNM`-lohkosta, aseet `WEAP`/`HPTS`-datasta,
-ohjusten osumatodennäköisyyden pelitestaus (MISN-10A), tappotaulu, asekatalogi,
-kirjanpito, nimet tekstityksiin, musiikin läpikäynti.
+ohjusten osumatodennäköisyyden pelitestaus (MISN-10A), nimet tekstityksiin, musiikin
+läpikäynti, asevaraston kytkentä latausruutuun.
+
+**Tehty 18.11.2026:** kirjanpito, tappotaulu ja asekatalogi omina ruutuinaan alkuperäisen
+grafiikan, fonttien, asettelun ja sääntöjen mukaan (`office_screens.gd`, ks.
+docs/GAMEFLOW_VM.md, "Toimiston ruudut").
 
 ### Vaihe 6: Julkaisu
 

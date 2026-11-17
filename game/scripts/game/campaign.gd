@@ -212,6 +212,98 @@ func ledger_text() -> String:
 		cash, overhead, plane_costs, purchases]
 
 
+# --- office screens: ledger, kill board, catalog (rules from OPTTEST.EXE) -----------
+
+## Kill board callsigns of pilots 1..7 (pilot 0 is the player).
+const CALLSIGNS := ["", "PRIMETIME", "PHOENIX", "BASELINE", "ZORRO", "TEX", "VIXEN", "HAWK"]
+## Ledger page 2: names of the WEAPONS stock entries, in stock order.
+const WEAPON_NAMES := ["AIM-9J", "AIM-9M", "AGM-65D", "DURANDAL", "MK-20", "MK-82", "GBU-15", "LAU-3", "AIM-120"]
+## Catalog records: name, price (k$), stock added per order {stock index: n}.
+## Record 9 is the F-16 page, which cannot be ordered.
+const CATALOG := [
+	["AIM-9J", 30, {0: 1}], ["AIM-9M", 60, {1: 1}], ["AIM-120", 200, {8: 1}],
+	["AGM-65D", 100, {2: 1}], ["LAU-3", 10, {7: 1}], ["MK-20", 20, {4: 1}],
+	["MK-82", 10, {5: 1}], ["DURANDAL", 30, {3: 1}], ["GBU-15", 100, {6: 1}],
+	["F-16", 0, {}],
+	["PACKAGE 1", 250, {6: 2, 5: 24}], ["PACKAGE 2", 450, {0: 6, 1: 6}],
+	["PACKAGE 3", 800, {2: 10}], ["PACKAGE 4", 300, {0: 12}]]
+const CREDIT := 1000            # catalog orders may overdraw the account by 1 M$
+const MAX_ORDER := 99           # receipts show two digits
+
+
+## Ledger page 1 rows [label, value]; an empty label is a blank row.
+func ledger_rows() -> Array:
+	return [["PREVIOUS CASH", cash + plane_costs], ["F-16 REPLACEMENT", plane_costs],
+		["WEAPONS", purchases], ["", 0], ["CURRENT CASH", cash - purchases], ["", 0],
+		["PROJ OVERHEAD", overhead], ["PROJ CASH", cash - overhead - purchases]]
+
+
+## Kill board rows [callsign, air kills, ground kills] of the active pilots,
+## most kills first (the original bubble-sorts on air + ground).
+func kill_board() -> Array:
+	if pilots.size() < 8:
+		_reset_pilots()
+	var rows := []
+	for i in 8:
+		if pilots[i][2] == 0:
+			continue
+		var n: String = String(names.get("C", "PLAYER")) if i == 0 else CALLSIGNS[i]
+		rows.append([n.to_upper(), pilots[i][0], pilots[i][1]])
+	for a in rows.size():
+		for b in rows.size() - 1 - a:
+			if rows[b][1] + rows[b][2] < rows[b + 1][1] + rows[b + 1][2]:
+				var t = rows[b]
+				rows[b] = rows[b + 1]
+				rows[b + 1] = t
+	return rows
+
+
+## One visit to the catalog: money available (cash less the orders not yet
+## charged), the amount spent on this visit and the count of each record.
+func catalog_open() -> Dictionary:
+	var counts := []
+	counts.resize(CATALOG.size())
+	counts.fill(0)
+	return {"avail": cash - purchases, "spent": 0, "counts": counts}
+
+
+## Orders one more of record `rec`; the weapons go into the stock at once.
+func catalog_buy(o: Dictionary, rec: int) -> bool:
+	if rec < 0 or rec >= CATALOG.size() or CATALOG[rec][2].is_empty() or o.counts[rec] >= MAX_ORDER:
+		return false
+	var price: int = CATALOG[rec][1]
+	if o.avail - o.spent + CREDIT < price:
+		return false
+	o.counts[rec] += 1
+	o.spent += price
+	for k in CATALOG[rec][2]:
+		weapons[k] += CATALOG[rec][2][k]
+	return true
+
+
+func catalog_cancel(o: Dictionary, rec: int) -> bool:
+	if rec < 0 or rec >= CATALOG.size() or o.counts[rec] <= 0:
+		return false
+	o.counts[rec] -= 1
+	o.spent -= CATALOG[rec][1]
+	for k in CATALOG[rec][2]:
+		weapons[k] -= CATALOG[rec][2][k]
+	return true
+
+
+## Leaving the catalog: the orders are charged with the next flight.
+func catalog_close(o: Dictionary) -> void:
+	purchases += o.spent
+	o.spent = 0
+
+
+func _office_screen(kind: String, fallback: String) -> void:
+	if host != null and host.has_method("show_office_screen"):
+		await host.show_office_screen(kind)
+	elif fallback != "":
+		message.emit(fallback)
+
+
 func enter_stage(index: int) -> void:
 	stage = index
 	next_stage = -1
@@ -310,15 +402,15 @@ func run(effects: Array) -> void:
 			0x12:
 				await host.play_transport(arg)
 			0x13:
-				message.emit("Kill board: you have %d air / %d ground kills." % [pilots[0][0], pilots[0][1]])
+				await _office_screen("kills", "Kill board: you have %d air / %d ground kills." % [pilots[0][0], pilots[0][1]])
 			0x17:
-				message.emit("Weapons catalog is not available yet.")
+				await _office_screen("catalog", "")
 			0x19:
-				message.emit(ledger_text())
+				await _office_screen("ledger", ledger_text())
 			0x1a:
 				# After a flight in which the player scored: the kill board update.
 				if player_scored:
-					message.emit("Kill board updated: %d air / %d ground kills." % [pilots[0][0], pilots[0][1]])
+					await _office_screen("kills", "Kill board updated: %d air / %d ground kills." % [pilots[0][0], pilots[0][1]])
 			0x1b:
 				if arg < pilots.size():
 					pilots[arg][2] = 0

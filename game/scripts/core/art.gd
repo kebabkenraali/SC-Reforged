@@ -94,3 +94,73 @@ static func layer_image(d: Dictionary, at: Vector2i, pal: PackedColorArray) -> I
 	var c := new_canvas()
 	blit(c, d, at)
 	return canvas_image(c, pal)
+
+
+# --- bitmap fonts (DATA/FONTS/*.SHP: frame n is character code n) ------------------
+
+static var _fonts := {}
+
+
+## Decoded glyphs of font `name` (e.g. "LEDGFONT"): char code -> frame.
+## Empty 1 x 1 frames are characters the font does not have.
+static func font(name: String) -> Dictionary:
+	if not _fonts.has(name):
+		var glyphs := {}
+		var raw := SCData.read("FONTS/%s.SHP" % name)
+		if raw.size() > 0:
+			var fr := Shape.frames(Shape.unpack(raw))
+			for i in fr.size():
+				var d := Shape.decode(fr[i])
+				if not d.is_empty() and (d.w > 1 or d.h > 1):
+					glyphs[i] = d
+		_fonts[name] = glyphs
+	return _fonts[name]
+
+
+## Width of a missing character (space): about half the font height.
+static func _space(glyphs: Dictionary) -> int:
+	var d = glyphs.get(48, glyphs.get(65, {}))
+	return maxi(3, int(d.get("h", 6)) / 2 + 1)
+
+
+static func text_width(glyphs: Dictionary, s: String) -> int:
+	var w := 0
+	for ch in s:
+		var d = glyphs.get(ch.unicode_at(0), {})
+		w += (d.w + 1) if not d.is_empty() else _space(glyphs)
+	return maxi(0, w - 1)
+
+
+## Draws `s` with its baseline at `at.y`. `color` >= 0 paints every glyph
+## pixel with that palette index (ink colour); -1 keeps the font's own colours.
+static func draw_text(canvas: Dictionary, glyphs: Dictionary, s: String, at: Vector2i, color := -1) -> int:
+	var x := at.x
+	for ch in s:
+		var d = glyphs.get(ch.unicode_at(0), {})
+		if d.is_empty():
+			x += _space(glyphs)
+			continue
+		if color >= 0:
+			var g: Dictionary = d.duplicate()
+			var px := PackedByteArray()
+			px.resize(d.w * d.h)
+			px.fill(color)
+			g.pixels = px
+			blit(canvas, g, Vector2i(x, at.y))
+		else:
+			blit(canvas, d, Vector2i(x, at.y))
+		x += d.w + 1
+	return x - at.x
+
+
+## Palette index closest to colour `c` (for ink colours).
+static func nearest(pal: PackedColorArray, c: Color) -> int:
+	var best := 0
+	var bd := INF
+	for i in pal.size():
+		var p: Color = pal[i]
+		var d: float = Vector3(p.r - c.r, p.g - c.g, p.b - c.b).length_squared()
+		if d < bd:
+			bd = d
+			best = i
+	return best

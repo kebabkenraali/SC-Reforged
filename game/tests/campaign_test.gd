@@ -13,6 +13,10 @@ class FakeHost:
 	var report = null      # flight report (Dictionary) instead of a plain result
 	var go := true
 	var music := []
+	var screens := []
+
+	func show_office_screen(kind: String) -> void:
+		screens.append(kind)
 
 	func choose_loadout(_n: int) -> bool:
 		return go
@@ -142,6 +146,67 @@ func _initialize() -> void:
 	c.flags[80] = true
 	await c.run([[0x21, 2], [0x0a, 80], [0x0a, 81], [0x06, 82], [0x1f, 0]])
 	_check("21 n: all conditions must hold", not c.flags.has(82))
+
+	# Office screens (effects 19 / 13 / 17): the ledger, kill board and catalog
+	# as decoded from OPTTEST.EXE.
+	var host_s := FakeHost.new()
+	c.host = host_s
+	await c.run([[0x19, 0], [0x13, 0], [0x17, 0]])
+	_check("19 / 13 / 17 open ledger, kill board, catalog", host_s.screens == ["ledger", "kills", "catalog"], str(host_s.screens))
+	var e = Campaign.new()
+	e._reset_economy()
+	e.cash = 5350
+	e.overhead = 1500
+	e.plane_costs = 500
+	var rows: Array = e.ledger_rows()
+	_check("ledger: previous 5850, current 5350, projected 3850", rows[0] == ["PREVIOUS CASH", 5850]
+		and rows[4] == ["CURRENT CASH", 5350] and rows[7] == ["PROJ CASH", 3850], str(rows))
+	var o: Dictionary = e.catalog_open()
+	var w0: Array = e.weapons.duplicate()
+	_check("package 1 = 2 GBU-15 + 24 MK-82 for 250", e.catalog_buy(o, 10) and e.weapons[6] == w0[6] + 2
+		and e.weapons[5] == w0[5] + 24 and o.spent == 250, "%s spent %d" % [e.weapons, o.spent])
+	_check("cancel returns the package", e.catalog_cancel(o, 10) and e.weapons == w0 and o.spent == 0)
+	_check("the F-16 page cannot be ordered", not e.catalog_buy(o, 9))
+	e.cash = 100
+	o = e.catalog_open()
+	var n_ok := 0
+	while e.catalog_buy(o, 12):    # package 3, 800 each
+		n_ok += 1
+	_check("1 M$ credit: 100 + 1000 buys one 800 package", n_ok == 1 and o.spent == 800, "%d %d" % [n_ok, o.spent])
+	e.catalog_close(o)
+	_check("orders are charged with the next flight", e.purchases == 800 and e.ledger_rows()[2] == ["WEAPONS", 800])
+	e.charge_flight()
+	_check("flight start: cash - overhead - orders", e.cash == 100 - 1500 - 800 and e.purchases == 0, str(e.cash))
+	e.pilots[0] = [3, 5, 1]
+	e.pilots[7] = [12, 9, 1]
+	e.pilots[4] = [9, 9, 0]
+	var board: Array = e.kill_board()
+	_check("kill board: most kills first, inactive pilots hidden", board.size() == 7 and board[0][0] == "HAWK"
+		and board[1][0] == String(e.names.C).to_upper() and not board.any(func(r): return r[0] == "ZORRO"), str(board))
+	# Hit areas and drawing of the screens.
+	var Office = load("res://scripts/ui/office_screens.gd")
+	var s = Office.new()
+	s.campaign = e
+	s.kind = "catalog"
+	e.cash = 5000
+	s._order = e.catalog_open()
+	var hits := [s.hit(Vector2(60, 110)), s.hit(Vector2(60, 150)), s.hit(Vector2(170, 80)), s.hit(Vector2(190, 110))]
+	_check("catalog page 1: AIM-9J, AIM-9M, AIM-120, LAU-3", hits.map(func(h): return h.get("rec", -1)) == [0, 1, 2, 4],
+		str(hits.map(func(h): return h.get("rec", -1))))
+	_check("catalog top edge returns, corner turns", s.hit(Vector2(100, 20)).what == "exit" and s.hit(s.CORNER_FORWARD).what == "forward")
+	s.press(hits[0])
+	_check("clicking an item orders it, its receipt cancels it", s._order.counts[0] == 1 and s.hit(Vector2(60, 196)).what == "receipt",
+		str(s.hit(Vector2(60, 196))))
+	var img: Image = s.compose()
+	s.kind = "ledger"
+	var img2: Image = s.compose()
+	s.kind = "kills"
+	var img3: Image = s.compose()
+	_check("screens compose to 320 x 200", img.get_size() == Vector2i(320, 200) and img2.get_size() == Vector2i(320, 200)
+		and img3.get_size() == Vector2i(320, 200))
+	s.kind = "ledger"
+	_check("ledger page turns from the page", s.hit(Vector2(150, 100)).what == "turn" and s.hit(Vector2(150, 10)).what == "exit")
+	s.free()
 
 	_check("text substitution", c.substitute("Hey, $N.") == "Hey, %s." % c.names.N)
 	c.save()

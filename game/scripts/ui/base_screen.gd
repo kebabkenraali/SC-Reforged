@@ -11,6 +11,7 @@ const CutsceneVM = preload("res://scripts/ui/cutscene_vm.gd")
 const Midgame = preload("res://scripts/formats/sc_midgame.gd")
 const UiTheme = preload("res://scripts/ui/ui_theme.gd")
 const LoadoutScreen = preload("res://scripts/ui/loadout_screen.gd")
+const OfficeScreens = preload("res://scripts/ui/office_screens.gd")
 const Weapons = preload("res://scripts/game/weapons.gd")
 # SCData and Settings are autoload singletons (see project.godot); do not preload them.
 
@@ -395,6 +396,20 @@ func fly_mission(n: int) -> Variant:
 	_pending_mission_file = ""
 	var report = await flight_done
 	return report
+
+
+## Gameflow effects 19 / 13 / 1a / 17: the ledger ("ledger"), the kill board
+## ("kills") or the weapons catalog ("catalog") over the base screen.
+## Unattended runs see each for a moment only.
+func show_office_screen(kind: String) -> void:
+	var s = OfficeScreens.new()
+	s.campaign = campaign
+	s.kind = kind
+	s.auto_close = DisplayServer.get_name() == "headless" \
+		or OS.get_cmdline_user_args().has("--autoplay") or OS.get_cmdline_user_args().has("--autopilot")
+	add_child(s)
+	await s.closed
+	s.queue_free()
 
 
 ## Gameflow effect 18 n: base-screen music (sequence n of GAMEFLOW.ADL).

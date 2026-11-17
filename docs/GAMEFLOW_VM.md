@@ -119,20 +119,62 @@ merkitsee kuolleet siipimiehet, `SCOR` kasvattaa kokonaispisteitä.
 raportoi `campaign_report()`:lla rekisterit, menetetyt koneet ja pelaajan pudotukset;
 pausevalikosta poistuminen = keskeytys. Testit: `campaign_test.gd`.
 
-## Ruutujen grafiikka (selvitetty 17.11.2026, toteutus kesken)
+## Toimiston ruudut (purettu ja toteutettu 18.11.2026)
 
-- Tappotaulu (`13`, OPTTEST `4b32:0f31`): tausta OPTSHPS-arkiston kuva 0x7b (123), paletti
-  OPTPALS-arkistosta (0x16), numerot fontilla `dataontsoardfnt.shp`. Pilottien nimet
-  ovat ilmeisesti taustakuvassa (ohjelmassa ei ole nimiä teksteinä). Pilotit 1–5 =
-  valittavat siipimiehet (Billy, Gwen, Lyle, Miguel, Tex, WNGS-järjestys), 0 = pelaaja,
-  6–7 ei valittavissa (7:llä suurin aloitussaldo).
-- Kirjanpito (`19`): rivit PREVIOUS CASH, F-16 REPLACEMENT, WEAPONS, CURRENT CASH,
-  PROJ OVERHEAD, PROJ CASH (arvo + "000"), fontti `ledgfont`. Asekatalogi (`17`): fontti
-  `calcfont`; OPTSHPS-kuvat 0x9a–0x9d ladataan `4b36:0f2d`–`0f71`, ja `4b36:1f60` lataa 0x29.
+Efektit `19` (kirjanpito), `13` / `1a` (tappotaulu) ja `17` (asekatalogi) avaavat omat
+ruutunsa. Toimiston ja teltan spritet: 128 = kirjanpito, 112 = tappotaulu, 30 = katalogi
+(katalogi ilmestyy vaiheesta 8 alkaen). Tekstit piirretään `DATA/FONTS`-fonteilla, joissa
+kuvan n on merkkikoodi n. Annettu y on kirjoitusrivin yläreuna (kirjanpidon rivit osuvat
+kirjan viivoihin).
+
+**Kirjanpito** (OPTTEST `4b36:1e60`, GAMEFLOW-ruutu 128): kirjakuva OPTSHPS 140,
+paletti OPTPALS 18, fontti `LEDGFONT`; sivunkääntö on kuvan 41 ruudut 3 → 0. Sivu 1:
+PREVIOUS CASH = kassa + konekorvaukset, F-16 REPLACEMENT = konekorvaukset, WEAPONS =
+odottavat ostot, CURRENT CASH = kassa − ostot, PROJ OVERHEAD = yleiskulut, PROJ CASH =
+kassa − yleiskulut − ostot. Nimet x = 68, luvut oikealle tasattuna x = 218 asti, perään
+"000" kohtaan x = 222; rivien y = 59, 65, 70, 76, 82, 87, 93, 99, 105, 111 (rivit 3 ja 5
+tyhjiä). Sivu 2: yhdeksän asetta varastojärjestyksessä (AIM-9J, AIM-9M, AGM-65D, DURANDAL,
+MK-20, MK-82, GBU-15, LAU-3, AIM-120) ja varastomäärät. Sivua käännetään sivua
+klikkaamalla, yläreuna palaa.
+
+**Tappotaulu** (`4b32:0f31`): valkotaulu OPTSHPS 123, paletti 22, fontti `BOARDFNT`.
+Otsikot GROUND (oikea reuna x = 250) ja AIR (x = 290) rivillä y = 45; pilotit riveille
+y = 60, 75, … (nimi x = 83). Nimet ovat kutsumerkkejä: pelaaja (oma kutsumerkki),
+PRIMETIME, PHOENIX, BASELINE, ZORRO, TEX, VIXEN, HAWK. Järjestys: ilma- + maapudotukset
+suurimmasta pienimpään; pilotti, jonka tila on 0, jätetään pois. Klikkaus mihin tahansa
+palaa.
+
+**Asekatalogi** (`4b36:0e31`, GAMEFLOW-ruutu 30): kuva OPTSHPS 92 (kirja + laskin),
+paletti 13. Kirjassa viisi aukeamaa: perussivu (AIM-9J, AIM-9M | AIM-120, LAU-3) ja
+sivukuvat 93/94 (AGM-65D, GBU-15 | MK-20, MK-82), 95/96 (DURANDAL | F-16, ei myytävänä),
+97/98 ja 99/100 (paketit 1–4). Sivuja käännetään yläkulmista, yläreuna (y < 50) palaa.
+14 tietuetta (hinta k$, varastoon tuleva määrä):
+
+| Tietue | Tuote | Hinta | Varastoon |
+|---|---|---|---|
+| 0–8 | AIM-9J, AIM-9M, AIM-120, AGM-65D, LAU-3, MK-20, MK-82, DURANDAL, GBU-15 | 30, 60, 200, 100, 10, 20, 10, 30, 100 | 1 kpl |
+| 9 | F-16 | – | ei tilattavissa |
+| 10 | paketti 1 | 250 | 2 GBU-15 + 24 MK-82 |
+| 11 | paketti 2 | 450 | 6 AIM-9J + 6 AIM-9M |
+| 12 | paketti 3 | 800 | 10 AGM-65D |
+| 13 | paketti 4 | 300 | 12 AIM-9J |
+
+Tilaus onnistuu, jos (kassa − odottavat ostot) − tällä käynnillä käytetty + 1 000 ≥ hinta
+(miljoonan dollarin luotto). Aseet tulevat varastoon heti; summa lisätään odottaviin
+ostoihin, kun katalogista poistutaan, ja veloitetaan seuraavan lennon alussa. Kuitit
+ovat kuvia 101 + tietue; kappalemäärä piirretään numerokuvilla 155 / 156 (kymmenet ja
+ykköset kiinteisiin kohtiin), kuitin klikkaus tai oikea painike perii yhden tilauksen.
+Laskimen rivit (fontti `CALCFONT`, oikea reuna x = 295, y = 35 / 41 / 47): käytettävissä,
+käytetty, saldo; nollasta poikkeavaan lukuun lisätään "000".
+
+**Remake:** `scripts/ui/office_screens.gd` (ruudut, osumat, piirto), `campaign.gd`
+(`ledger_rows`, `kill_board`, `catalog_open` / `catalog_buy` / `catalog_cancel` /
+`catalog_close`), `art.gd` (fontit), `base_screen.show_office_screen`. Valvomattomissa
+ajoissa ruutu sulkeutuu itsestään. Testit: `campaign_test.gd`.
 
 ## Avoinna
 
-- Kirjanpidon, katalogin ja tappotaulun omat ruudut (nyt tekstiviesteinä); katalogiostot
-  (`+0x283`); asevaraston kulutus lennolla (`WPNS`) ja latausruudun kytkentä varastoon.
-- Kokonaispisteet (`SCOR`), siipimiesten kuolema (`DIED`) ja pilottien nimet.
+- Asevaraston kulutus lennolla (`WPNS`) ja latausruudun kytkentä varastoon.
+- Kokonaispisteet (`SCOR`) ja siipimiesten kuolema (`DIED`).
+- Tappotaulun päivitysanimaatio (`1a`; nyt sama taulu) ja ruutujen äänet.
 - `26 n`:n äänimerkitys, `16 n`:n argumentti, kenttien `+0xf8` ja `+0x3d6` merkitys.
