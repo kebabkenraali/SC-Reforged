@@ -55,6 +55,7 @@ var _loadout := {}            # the aircraft's original from the WPNS loadout, f
 var bomb_run := false         # testing: start at the computed release point for a mission target
 var debrief_after := -1.0     # testing: end the mission (as landed) after this many seconds
 var approach := false         # testing: start on final approach to the home runway
+var aborted := false          # campaign: left through the pause menu (original exit code 5)
 var approach_dist := 8000.0   # --approach=M: distance from the threshold
 var approach_high := 120.0    # --approach_high=M: height above the 3 deg slope
 var approach_speed := 115.0   # --approach_speed=M/S
@@ -241,6 +242,7 @@ func _ready() -> void:
 	_pause.quit_to_menu.connect(func():
 		get_tree().paused = false
 		if campaign_mode:
+			aborted = true    # the original's "abort": as if the mission was not flown
 			mission_result.emit(false)
 		else:
 			exit_to_menu.emit())
@@ -2871,6 +2873,19 @@ func _setup_cockpit_model() -> void:
 		cockpit_model = ckpt
 		print("cockpit model attached: ", name)
 		return
+
+
+## Flight results for the campaign, as the original STRIKE.EXE writes them to
+## misn2op.iff: mission registers (STAT; reg 0 = success, reg 1 = payment in
+## k$), planes lost (JETS: the player's and the squadron's fighters), the
+## player's kills (KILL) and the abort flag (EXIT 5).
+func campaign_report(success: bool) -> Dictionary:
+	var jets := 0 if player.alive else 1
+	for a in allies:
+		if not a.alive and not a.get_meta("removed", false) and not _is_transport(a):
+			jets += 1
+	return {"ok": success, "aborted": aborted, "regs": _vm_regs.duplicate(),
+		"jets_lost": jets, "kills_air": stats.air_kills, "kills_ground": stats.ground_kills}
 
 
 ## Ends a mission and shows the debrief. reason: landed / lost / script_failed / quit

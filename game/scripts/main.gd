@@ -177,10 +177,11 @@ func _fly_campaign_mission(file: String) -> void:
 
 
 func _campaign_flight_done(success: bool, f: Node) -> void:
+	var report: Dictionary = f.campaign_report(success)
 	f.queue_free()
 	_base.visible = true
 	_base.process_mode = Node.PROCESS_MODE_INHERIT
-	_base.flight_done.emit(success)
+	_base.flight_done.emit(report)
 
 
 func _drop_base() -> void:
@@ -319,6 +320,7 @@ func _headless_finish(f) -> void:
 			break
 	_headless_status(f)
 	print("HEADLESS: MISSION OVER result=%s  %s" % [report.get("result", "?"), report.get("reason", "")])
+	print("  mission registers: %s  campaign report: %s" % [f._vm_regs, f.campaign_report(report.get("result", "") == "success")])
 	for row in report.get("stats", []):
 		print("  %s: %s" % [row[0], row[1]])
 	for wp in report.get("waypoints", []):

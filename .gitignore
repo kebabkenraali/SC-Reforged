@@ -24,3 +24,8 @@ docs/PLAYTESTERS_GUIDE.txt
 docs/SC_MANUAL.txt
 docs/DEKOMPILU/*
 !docs/DEKOMPILU/README.md
+
+# Local-only material derived from the original game (disassembly, data dumps):
+# helps compatibility work, never committed or distributed. Only the README.
+alkuperainen_purku/*
+!alkuperainen_purku/README.md

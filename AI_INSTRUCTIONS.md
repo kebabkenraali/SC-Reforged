@@ -105,8 +105,9 @@ onnistumisen merkki on "Landed at base" ja runko 100 %.
 - Saattokohteet (`a8` pelaajan puolelta) luokitellaan ystäviksi sivutavusta riippumatta.
 - VOCLIST-äänitiedoston nimen etuliite on puhuja (`AI` = pelaaja, `ST` = Stern), ei tehtävä.
 - Pelaajan route-blokin `ab n` on reittipisteen teksti, ei radiolähetys.
-- Alkuperäisen pelin purku: purkulistaukset vain paikallisesti (`docs/DEKOMPILU/` on
-  .gitignoressa); projektiin kirjataan vain omin sanoin kirjoitetut havainnot.
+- Alkuperäisen pelin purku: purkulistaukset ja datavedokset kansioon `alkuperainen_purku/`
+  (paikallinen, .gitignoressa, ei koskaan jaeta; luodaan uudelleen
+  `tools/decompile/pura_tulkit.py`:llä). Projektiin kirjataan vain omin sanoin kirjoitetut havainnot.
 - PROG-tulkki on akkumulaattorikone, ja liput ovat samoja muuttujia (ks. `docs/PROG_VM.md`).
   `97 n` = etäisyys SPOTiin n, yksikkö 1000 ft. Älä palauta vanhoja pinokonetulkintoja.
 

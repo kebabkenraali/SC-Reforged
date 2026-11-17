@@ -61,25 +61,25 @@ Varmuus: **V** = luettu käsittelijästä; **T** = rakenne varma, pelimerkitys p
 | `0f` | 29 | siirry seuraavaan vaiheeseen | V | ✓ |
 | `10` / `11` | 54 / 54 | tallennus / lataus | V | tallennus automaattinen |
 | `12 n` | 12 | kuljetusanimaatio n | V | ✓ |
-| `13` | 54 | tappotaulu (moduuli 4b32) | T | viesti "ei saatavilla" |
+| `13` | 54 | tappotaulu (moduuli 4b32) | T | viesti (pelaajan pudotukset) |
 | `14`/`15` | 20 / 6 | ehto: viimeisin vastaus kyllä / ei | V | ✓ |
 | `16 n` | 42 | **ehto: aseidenlatausruutu**, tosi kun pelaaja valitsee lennon; argumentti välitetään kuorman valmisteluun (merkitys avoin) | V / A (n) | ✓ (17.11.) |
 | `17 n` | 43 | asekatalogi (moduuli 4b36) | T | viesti |
 | `18 n` | 11 | musiikkikappale n | V / T | ✓ GAMEFLOW.ADL (17.11.) |
-| `19` | 54 | kirjanpito (moduuli 4b36) | T | viesti |
-| `1a` | 27 | lennon jälkeinen ruutu (moduuli 4b32), jos kenttä `+0xed` ≠ 0 eikä `+0xf8` = 2 | V / A | – |
-| `1b n` | 2 | nollaa 8-paikkaisen (26 tavua/tietue) taulukon tietueen n tilan (luultavasti pilotti) | V / A | – |
+| `19` | 54 | kirjanpito (moduuli 4b36): kassa, yleiskulut, konekorvaukset, ostot | V | viesti (luvut) |
+| `1a` | 27 | tappotaulun päivitys lennon jälkeen, jos pelaaja pudotti jotain (`+0xed`) | V | viesti |
+| `1b n` | 2 | pilotin n tila = 0 (pilottitaulukko, 8 × 26 tavua) | V | ✓ |
 | `1c` | 0 | ehto, aina tosi | V | ✓ |
-| `1d` | 12 | peli ohi -tarkistus: laskuri `+0x3d4` > 16 tai kassa `+0x27b` < 0 → lopetus (koodi 0xfe / 0xff) ja listan ajo päättyy | V / T | – |
+| `1d` | 12 | peli ohi: menetettyjä koneita > 16 tai kassa < 0 → lopetus (0xfe / 0xff), listan ajo päättyy | V | ✓ (viesti + `end_campaign`) |
 | `1e` / `1f` | 117 / 159 | else / endif | V | ✓ |
 | `20 n` | 62 | ehto: tehtävän n tulos = 1 (onnistui) | V | ✓ |
 | `21 n` | 0 | n seuraavaa ehtoa, kaikkien tosia | V | ✓ |
-| `22 n` | 94 | ruutu n (moduuli 4b32), sisältö avoin | V / A | – |
+| `22 n` | 94 | kirjanpitotapahtuma n (`FORM STAT / CHNG`, ks. Talous) | V | ✓ |
 | `23` | 0 | ehto, aina epätosi (alkuperäisen bugi) | V | ✓ |
-| `24` | 27 | jos `+0xea` ≠ 0: musiikki 8 ja erikoiskeskustelu 252 tai 253 (`+0xf8` = 2) | V / A | – |
-| `25` | 7 | ehto: kenttä `+0x3d7` ≠ 0 | V / A | aina epätosi |
+| `24` | 27 | jos edellisellä lennolla menetettiin kone: musiikki 8 ja keskustelu 252 (tai 253, kun `+0xf8` = 2) | V | ✓ (252) |
+| `25` | 7 | ehto: edellisen lennon tehtävärekisteri 2 ≠ 0 | V | ✓ |
 | `26 n` | 18 | äänimoduulin asetus n (vaiheiden alussa: 1, 2, 3 sijainnin mukaan) | V / A | – |
-| `27`–`2a` | 0 | ehtoja kentistä `+0x3d6`, `+0x3d8`…`+0x3da` | V | – |
+| `27`–`29` / `2a` | 0 | ehdot: tehtävärekisterit 3–5 ≠ 0 / kenttä `+0x3d6` (lähde avoin) | V | ✓ / epätosi |
 
 ## Mitä muuttui remakessa (17.11.2026)
 
@@ -89,9 +89,39 @@ Varmuus: **V** = luettu käsittelijästä; **T** = rakenne varma, pelimerkitys p
   siirrytään `0d`-vaiheeseen tuloksesta riippumatta.
 - `03 n` ja `0e` käynnistävät lennon; `18 n` soittaa tukikohtamusiikin.
 
+## Talous (purettu 17.11.2026)
+
+Rahat ovat tuhansina dollareina, kuten alkuperäisessä.
+
+**Kirjanpitotapahtumat:** GAMEFLOW.IFF:n `GAME`-lomakkeen jälkeen on lomakkeet `WRLD`, `LOAD`,
+`MLST` (tehtäväluettelo `DATA`), `WNGS` (siipimiehet) ja `STAT`. `STAT` sisältää 25
+`CHNG`-tapahtumaa: `INFO` = tunniste (johon `22 n` viittaa), `CASH` / `OVER` = toiminto
+(0 lisää, 1 vähennä, 2 aseta) ja 32-bittinen summa, `WEAP` = asevaraston muutokset
+(4 tavua: toiminto, asetyyppi, määrä), `PILT` = pilottitaulukon muutokset (5 tavua:
+toiminto, pilotti, kenttä 0 ilma- / 1 maapudotukset / 2 tila, arvo). Vaihe 0: kassa 4 850,
+yleiskulut 1 500, asevarasto (mm. 44 × SWINDERJ, 16 × DURANDAL), muiden pilottien
+pudotukset. Asetyypit: SWINDERJ, SWINDERM, AGM-65D, DURANDAL, MK20, MK82, GBU-15G, POD, AMRAAM.
+
+**Lennon alussa** (OPTTEST `4b1e:1aac`): kassa −= yleiskulut + odottavat ostot, ostot nollataan.
+
+**Palkkio tulee tehtäväskriptistä.** Tehtävärekisterit (`14 n`, ks. PROG_VM.md) kulkevat
+tulostiedoston `STAT`-lohkossa: rekisteri 0 = onnistuiko (tulos 1 / 2, jota `20 n` lukee),
+rekisteri 1 = palkkio (MISN-1A: lippu 12 × 25 × 100 = 2 500), rekisterit 2–5 = ehdot `25`,
+`27`–`29`.
+
+**Tulosten käsittely** (`misn2op`, `4b1e:141d`): `EXIT` 5 = keskeytetty, mitään ei muuteta.
+Muuten `WPNS` korvaa asevaraston, `JETS` = menetetyt koneet (kokonaismäärä kasvaa,
+korvaus 500 / kone vähennetään kassasta), `STAT` lisää palkkion kassaan, `KILL` lisää
+pilottien pudotukset (pelaajan pudotuksista lippu tappotaulun päivitykselle), `DIED`
+merkitsee kuolleet siipimiehet, `SCOR` kasvattaa kokonaispisteitä.
+
+**Remake:** `campaign.gd` (`apply_change`, `charge_flight`, `apply_report`), lentokohtaus
+raportoi `campaign_report()`:lla rekisterit, menetetyt koneet ja pelaajan pudotukset;
+pausevalikosta poistuminen = keskeytys. Testit: `campaign_test.gd`.
+
 ## Avoinna
 
-- Talous: kassa (`+0x27b`), palkkiot ja kulut. `1a`, `19`, `1d` ja `24` riippuvat niistä.
-  `misn2op.iff`:n `SCOR`- ja `KILL`-lohkot ovat lähtötiedot.
-- `22 n`:n ruudut, `1b n`:n taulukko (pilotit?), `26 n`:n äänimerkitys, `16 n`:n argumentti.
-- Kenttien `+0xea`, `+0xed`, `+0xf8` ja `+0x3d4`…`+0x3da` merkitys (missä ne asetetaan).
+- Kirjanpidon, katalogin ja tappotaulun omat ruudut (nyt tekstiviesteinä); katalogiostot
+  (`+0x283`); asevaraston kulutus lennolla (`WPNS`) ja latausruudun kytkentä varastoon.
+- Kokonaispisteet (`SCOR`), siipimiesten kuolema (`DIED`) ja pilottien nimet.
+- `26 n`:n äänimerkitys, `16 n`:n argumentti, kenttien `+0xf8` ja `+0x3d6` merkitys.

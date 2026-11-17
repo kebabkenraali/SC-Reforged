@@ -15,7 +15,7 @@ const Weapons = preload("res://scripts/game/weapons.gd")
 # SCData and Settings are autoload singletons (see project.godot); do not preload them.
 
 signal fly_requested(mission_file: String)
-signal flight_done(success: bool)
+signal flight_done(report)   # Dictionary from FlightScene.campaign_report()
 signal quit_requested
 signal _loadout_done(success: bool)
 
@@ -383,8 +383,8 @@ func choose_loadout(n: int) -> bool:
 	return went
 
 
-## Flies mission n (after choose_loadout). Returns true / false = succeeded
-## or not; null = no such mission (the campaign then stays in its stage).
+## Flies mission n (after choose_loadout). Returns the flight report
+## (FlightScene.campaign_report) or null = no such mission.
 func fly_mission(n: int) -> Variant:
 	var files: Array = campaign.mission_files()
 	if n < 0 or n >= files.size():
@@ -393,8 +393,8 @@ func fly_mission(n: int) -> Variant:
 	_pending_mission_file = files[n]
 	fly_requested.emit(_pending_mission_file)
 	_pending_mission_file = ""
-	var ok: bool = await flight_done
-	return ok
+	var report = await flight_done
+	return report
 
 
 ## Gameflow effect 18 n: base-screen music (sequence n of GAMEFLOW.ADL).

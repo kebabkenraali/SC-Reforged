@@ -10,6 +10,7 @@ class FakeHost:
 	var cutscenes := []
 	var flights := []
 	var succeed := true
+	var report = null      # flight report (Dictionary) instead of a plain result
 	var go := true
 	var music := []
 
@@ -31,9 +32,9 @@ class FakeHost:
 	func play_transport(_n: int) -> void:
 		pass
 
-	func fly_mission(n: int) -> bool:
+	func fly_mission(n: int):
 		flights.append(n)
-		return succeed
+		return report if report != null else succeed
 
 
 func _initialize() -> void:
@@ -55,6 +56,11 @@ func _initialize() -> void:
 	_check("stage 0 opens the hangar (screen 11)", c.screen == 11, str(c.screen))
 	_check("stage 0 plays cut-scene 5", host.cutscenes.has(5), str(host.cutscenes))
 	_check("stage 0 starts music 0 (18 0)", host.music.has(0), str(host.music))
+	# Economy from GAMEFLOW.IFF FORM STAT: stage 0 runs 22 1 (CASH = 4850)
+	# and 22 21 (OVER = 1500), in thousands of dollars.
+	_check("starting cash $4850K, overhead $1500K", c.cash == 4850 and c.overhead == 1500,
+		"cash %d overhead %d" % [c.cash, c.overhead])
+	_check("starting weapon stock (22 10)", c.weapons[0] > 0, str(c.weapons))
 
 	var sprites: Array = c.screen_sprites()
 	var fly = null
@@ -78,6 +84,24 @@ func _initialize() -> void:
 		# which records the result in flag 72 (20 0 -> set, else clear).
 		_check("successful flight -> stage 1, flag 72 set", c.stage == 1 and c.flags.get(72, false),
 			"stage %d flags %s" % [c.stage, c.flags.keys()])
+		# Paid flight: overhead charged, payment = mission register 1 (MISN-1A:
+		# 2500 when flag 12 is set), one lost plane costs 500.
+		var c4 = Campaign.new()
+		var host4 := FakeHost.new()
+		host4.report = {"ok": true, "regs": {0: 1, 1: 2500}, "jets_lost": 1, "kills_air": 3}
+		c4.host = host4
+		await c4.start_new()
+		await c4.activate(fly)
+		_check("payment and losses: 4850 - 1500 + 2500 - 500 = 5350", c4.cash == 5350 and c4.planes_lost == 1
+			and c4.results.get(0) == 1 and c4.pilots[0][0] == 3, "cash %d lost %d results %s" % [c4.cash, c4.planes_lost, c4.results])
+		var c5 = Campaign.new()
+		var host5 := FakeHost.new()
+		host5.report = {"ok": false, "aborted": true}
+		c5.host = host5
+		await c5.start_new()
+		await c5.activate(fly)
+		_check("aborted flight: no cost, same stage", c5.cash == 4850 and c5.stage == 0 and not c5.results.has(0),
+			"cash %d stage %d" % [c5.cash, c5.stage])
 		# Backing out of the loadout screen (16 false): no flight, same stage.
 		var c3 = Campaign.new()
 		var host3 := FakeHost.new()

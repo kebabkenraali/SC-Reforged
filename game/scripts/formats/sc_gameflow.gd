@@ -15,6 +15,13 @@ extends RefCounted
 const Iff = preload("res://scripts/formats/iff.gd")
 
 var stages := []        # [{ id, effects: [[op,arg]], scenes: { scene_id: [sprite] } }]
+## Ledger transactions (FORM STAT / FORM CHNG, read by gameflow effect 22 n,
+## decoded from OPTTEST.EXE): id -> { cash: [op, k$], over: [op, k$],
+## weap: [[op, weapon, count]], pilt: [[op, pilot, field, value]] }.
+## op 0 = add, 1 = subtract, 2 = set. Money is in thousands of dollars.
+var changes := {}
+## Mission names in campaign order (FORM MLST / DATA): matches misn2op INFO.
+var mission_list := []
 var screens := {}       # scene_id -> { tune, back_pals, back_shapes, fore_pal, sprites: [] }
 var backs := {}         # conversation background name -> [{ archive, shape, palette, y }]
 var faces := {}         # name -> CONVSHPS index
@@ -42,7 +49,9 @@ static func _pairs(buf: PackedByteArray, node) -> Array:
 
 
 func _parse_gameflow(buf: PackedByteArray) -> void:
-	var root = Iff.find(Iff.parse(buf), ["FORM:GAME"])
+	var nodes = Iff.parse(buf)
+	_parse_economy(buf, nodes)
+	var root = Iff.find(nodes, ["FORM:GAME"])
 	if root == null:
 		return
 	for m in Iff.find_all(root.children, "FORM:MISS"):
@@ -59,6 +68,40 @@ func _parse_gameflow(buf: PackedByteArray) -> void:
 					"requires": _pairs(buf, Iff.find(sp.children, ["REQU"]))})
 			stage.scenes[buf[sinfo.off]] = sprites
 		stages.append(stage)
+
+
+func _parse_economy(buf: PackedByteArray, nodes: Array) -> void:
+	var stat = Iff.find(nodes, ["FORM:STAT"])
+	if stat != null:
+		for ch in Iff.find_all(stat.children, "FORM:CHNG"):
+			var info = Iff.find(ch.children, ["INFO"])
+			if info == null:
+				continue
+			var c := {"weap": [], "pilt": []}
+			for key in ["CASH", "OVER"]:
+				var n = Iff.find(ch.children, [key])
+				if n != null and n.size >= 5:
+					c[key.to_lower()] = [buf[n.off], buf.decode_s32(n.off + 1)]
+			var w = Iff.find(ch.children, ["WEAP"])
+			if w != null:
+				for k in range(0, w.size - 3, 4):
+					c.weap.append([buf[w.off + k], buf[w.off + k + 1], buf.decode_u16(w.off + k + 2)])
+			var pl = Iff.find(ch.children, ["PILT"])
+			if pl != null:
+				for k in range(0, pl.size - 4, 5):
+					c.pilt.append([buf[pl.off + k], buf[pl.off + k + 1], buf[pl.off + k + 2], buf.decode_u16(pl.off + k + 3)])
+			changes[buf[info.off]] = c
+	var ml = Iff.find(nodes, ["FORM:MLST", "DATA"])
+	if ml != null:
+		var cur := ""
+		for k in ml.size:
+			var b: int = buf[ml.off + k]
+			if b == 0:
+				if cur != "":
+					mission_list.append(cur.to_upper())
+				cur = ""
+			else:
+				cur += char(b)
 
 
 func _parse_options(buf: PackedByteArray) -> void:

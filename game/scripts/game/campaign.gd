@@ -29,6 +29,24 @@ var mission := -1               # mission number selected by 0c
 var wingman := ""
 var results := {}               # mission number -> 1 succeeded / 2 failed (read by 20 n)
 var answer := true              # last yes / no answer in a conversation (read by 14 / 15)
+
+# --- squadron economy (decoded from OPTTEST.EXE, see docs/GAMEFLOW_VM.md) ----
+# Money in thousands of dollars, as in the original.
+const WEAPONS := ["SWINDERJ", "SWINDERM", "AGM-65D", "DURANDAL", "MK20", "MK82", "GBU-15G", "POD", "AMRAAM"]
+const PLANE_COST := 500         # replacement of one lost F-16 (k$)
+const MAX_PLANES_LOST := 16     # more lost planes than this ends the game (effect 1d)
+var cash := 0                   # +0x27b
+var overhead := 0               # +0x27f, charged on every flight
+var purchases := 0              # +0x283, catalog orders, charged on the next flight
+var plane_costs := 0            # +0x287, replacement cost of the last flight's losses
+var planes_lost := 0            # +0x3d4, whole campaign
+var planes_lost_last := 0       # +0xea, last flight (effect 24)
+var score := 0                  # +0x3dc
+var weapons := [0, 0, 0, 0, 0, 0, 0, 0, 0]   # stock of WEAPONS (+0x261)
+var pilots := []                # 8 x [air kills, ground kills, status]; 0 = the player
+var stat := [0, 0, 0, 0]        # mission registers 2..5 of the last flight (conditions 25, 27-29)
+var player_scored := false      # +0xed: the player got kills (effect 1a)
+var game_over := 0              # 0xfe too many planes lost, 0xff out of money
 var names := {"N": "Jack", "S": "Reed", "C": "Blade"}
 var host                        # base screen: play_conversation / play_cutscene / fly_mission
 var busy := false
@@ -97,10 +115,101 @@ func start_new() -> void:
 	stage = 0
 	flags.clear()
 	screen = -1
+	_reset_economy()
 	print("CAMPAIGN: playing MID1")
 	await host.play_story(1)          # MID1: the opening cut-scene
 	print("CAMPAIGN: MID1 done, entering stage 0")
 	await enter_stage(0)
+
+
+func _reset_economy() -> void:
+	cash = 0
+	overhead = 0
+	purchases = 0
+	plane_costs = 0
+	planes_lost = 0
+	planes_lost_last = 0
+	score = 0
+	weapons = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+	_reset_pilots()
+	stat = [0, 0, 0, 0]
+	player_scored = false
+	game_over = 0
+
+
+func _reset_pilots() -> void:
+	pilots = []
+	for i in 8:
+		pilots.append([0, 0, 1])
+
+
+## Effect 22 n: ledger transaction n of GAMEFLOW.IFF (FORM STAT / CHNG):
+## CASH / OVER change the money, WEAP the weapon stock, PILT the pilots.
+func apply_change(n: int) -> void:
+	var c = gameflow().changes.get(n)
+	if c == null:
+		return
+	if pilots.size() < 8:
+		_reset_pilots()
+	if c.has("cash"):
+		cash = _apply(cash, c.cash[0], c.cash[1])
+	if c.has("over"):
+		overhead = _apply(overhead, c.over[0], c.over[1])
+	for w in c.weap:
+		if w[1] < weapons.size():
+			weapons[w[1]] = maxi(0, _apply(weapons[w[1]], w[0], w[2]))
+	for p in c.pilt:
+		if p[1] < pilots.size() and p[2] < 3:
+			pilots[p[1]][p[2]] = _apply(pilots[p[1]][p[2]], p[0], p[3])
+
+
+static func _apply(v: int, op: int, amount: int) -> int:
+	match op:
+		0:
+			return v + amount
+		1:
+			return v - amount
+		2:
+			return amount
+	return v
+
+
+## Charged when a flight starts (the original's hand-over to STRIKE.EXE).
+func charge_flight() -> void:
+	cash -= overhead + purchases
+	purchases = 0
+
+
+## misn2op: the flight's results. Returns 1 succeeded / 2 failed, or 0 when
+## the flight was aborted (the original's exit code 5: nothing changes).
+func apply_report(r) -> int:
+	if not r is Dictionary:
+		r = {"ok": bool(r), "regs": {0: 1 if r else 0}}
+	if r.get("aborted", false):
+		return 0
+	var regs: Dictionary = r.get("regs", {})
+	planes_lost_last = int(r.get("jets_lost", 0))
+	planes_lost += planes_lost_last
+	plane_costs = planes_lost_last * PLANE_COST
+	stat = [int(regs.get(2, 0)), int(regs.get(3, 0)), int(regs.get(4, 0)), int(regs.get(5, 0))]
+	cash += int(regs.get(1, 0)) & 0xffff
+	if pilots.size() < 8:
+		_reset_pilots()
+	var ka: int = int(r.get("kills_air", 0))
+	var kg: int = int(r.get("kills_ground", 0))
+	pilots[0][0] += ka
+	pilots[0][1] += kg
+	player_scored = ka > 0 or kg > 0
+	# Success is the mission script's register 0 (MISN-1A: flag 12,
+	# "Mission accomplished"); without registers the flight's own verdict.
+	var ok: bool = int(regs.get(0, 0)) != 0 if regs.has(0) else bool(r.get("ok", false))
+	cash -= plane_costs
+	return 1 if ok else 2
+
+
+func ledger_text() -> String:
+	return "Ledger: cash $%dK, overhead $%dK per mission, plane losses $%dK, orders $%dK." % [
+		cash, overhead, plane_costs, purchases]
 
 
 func enter_stage(index: int) -> void:
@@ -119,7 +228,7 @@ func enter_stage(index: int) -> void:
 ## (OPTTEST.EXE 0xb916, see docs/GAMEFLOW_VM.md): the condition ops are
 ## 09 0a 14 15 16 1c 20 23 25 (and 27-2a, unused). 16 is the weapon-loading
 ## screen: true when the player clicks the cockpit to fly.
-const CONDITIONS := [0x09, 0x0a, 0x14, 0x15, 0x16, 0x1c, 0x20, 0x23, 0x25]
+const CONDITIONS := [0x09, 0x0a, 0x14, 0x15, 0x16, 0x1c, 0x20, 0x23, 0x25, 0x27, 0x28, 0x29, 0x2a]
 
 
 ## Runs an effect list; awaits conversations, cut-scenes and flights.
@@ -201,22 +310,57 @@ func run(effects: Array) -> void:
 			0x12:
 				await host.play_transport(arg)
 			0x13:
-				message.emit("Kill board is not available yet.")
+				message.emit("Kill board: you have %d air / %d ground kills." % [pilots[0][0], pilots[0][1]])
 			0x17:
 				message.emit("Weapons catalog is not available yet.")
 			0x19:
-				message.emit("Ledger is not available yet.")
+				message.emit(ledger_text())
+			0x1a:
+				# After a flight in which the player scored: the kill board update.
+				if player_scored:
+					message.emit("Kill board updated: %d air / %d ground kills." % [pilots[0][0], pilots[0][1]])
+			0x1b:
+				if arg < pilots.size():
+					pilots[arg][2] = 0
+			0x1d:
+				# Game over: too many planes lost or out of money.
+				if planes_lost > MAX_PLANES_LOST:
+					game_over = 0xfe
+				elif cash < 0:
+					game_over = 0xff
+				if game_over != 0:
+					message.emit("The Wildcats are finished: %s." % ("too many planes lost" if game_over == 0xfe else "out of money"))
+					if host.has_method("end_campaign"):
+						host.end_campaign(game_over)
+					busy = false
+					return
+			0x22:
+				apply_change(arg)
+			0x24:
+				# A plane was lost on the last flight: music 8 and the loss talk.
+				if planes_lost_last != 0:
+					if host.has_method("play_music"):
+						host.play_music(8)
+					var r2 = await host.play_conversation(0xfc)
+					if r2 is Dictionary:
+						answer = r2.get("accepted", true)
 	busy = false
 	if _pending_fly and mission >= 0:
 		_pending_fly = false
 		# The original writes op2misn.iff, hands over to STRIKE.EXE and comes
 		# back with misn2op.iff: then the stage named by 0d starts, whatever
 		# the result (stage 1 reads it with "20 0" -> flag 72).
+		charge_flight()
 		var r = await host.fly_mission(mission)
 		if r == null:
+			cash += overhead
 			return
-		results[mission] = 1 if r else 2
-		if r and Demo.enabled() and mission >= Demo.LAST_MISSION:
+		var res := apply_report(r)
+		if res == 0:
+			cash += overhead     # aborted: as if the mission had not been flown
+			return
+		results[mission] = res
+		if res == 1 and Demo.enabled() and mission >= Demo.LAST_MISSION:
 			host.end_demo()
 			return
 		var target: int = gameflow().stage_index(next_stage) if next_stage >= 0 else stage + 1
@@ -245,9 +389,12 @@ func _condition(op: int, arg: int) -> bool:
 			return not answer
 		0x20:
 			return int(results.get(arg, 0)) == 1
+		0x25, 0x27, 0x28, 0x29:
+			# Mission registers 2..5 of the last flight (STAT words 2..5).
+			return stat[[0x25, 0x27, 0x28, 0x29].find(op)] != 0
 		0x1c:
 			return true
-	return false                      # 23 / 25: state the port does not track yet
+	return false                      # 23: always false in the original; 2a: field not decoded
 
 
 func activate(sprite: Dictionary) -> void:
@@ -269,7 +416,10 @@ func save() -> void:
 	for k in results:
 		res[str(k)] = results[k]
 	f.store_string(JSON.stringify({"stage": stage, "screen": screen, "flags": fl,
-		"mission": mission, "wingman": wingman, "names": names, "results": res}))
+		"mission": mission, "wingman": wingman, "names": names, "results": res,
+		"economy": {"cash": cash, "overhead": overhead, "purchases": purchases,
+			"plane_costs": plane_costs, "planes_lost": planes_lost, "planes_lost_last": planes_lost_last,
+			"score": score, "weapons": weapons, "pilots": pilots, "stat": stat}}))
 
 
 static func has_save() -> bool:
@@ -294,4 +444,14 @@ func load_saved() -> bool:
 	results.clear()
 	for k in d.get("results", {}):
 		results[int(k)] = int(d.results[k])
+	_reset_economy()
+	var e: Dictionary = d.get("economy", {})
+	for key in ["cash", "overhead", "purchases", "plane_costs", "planes_lost", "planes_lost_last", "score"]:
+		set(key, int(e.get(key, get(key))))
+	if e.has("weapons"):
+		weapons = e.weapons.map(func(v): return int(v))
+	if e.has("pilots"):
+		pilots = e.pilots.map(func(p): return p.map(func(v): return int(v)))
+	if e.has("stat"):
+		stat = e.stat.map(func(v): return int(v))
 	return true
