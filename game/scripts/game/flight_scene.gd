@@ -1127,7 +1127,8 @@ func _stop_fast_travel(msg: String) -> void:
 	fast_travel = false
 	# Restore formation leaders so wingmen and escorted craft resume their
 	# normal AI (formation on their original lead, route following, etc.).
-	for a, leader in _ft_saved_leaders:
+	for a in _ft_saved_leaders:
+		var leader = _ft_saved_leaders[a]
 		if a != null and is_instance_valid(a):
 			a.formation_leader = leader
 	_ft_saved_leaders.clear()
