@@ -1077,15 +1077,15 @@ func _update_fast_travel(dt: float) -> void:
 	if not player.alive or player.on_ground:
 		_stop_fast_travel("Fast travel off.")
 		return
-	# Arrival: hand control back at the active waypoint and advance the route,
-	# using the same reach radius as _update_nav() so the warp stops AT this
-	# waypoint instead of sailing past it to the next leg.
+	# Arrival: hand control back at the active waypoint and advance the route.
+	# The warp stops AT the waypoint (using its radius, ~1 km default), not 6 km
+	# before it like _update_nav()'s safety-net reach does.
 	if nav_index >= waypoints.size():
 		_stop_fast_travel("Route complete.")
 		return
-	var reach := 6000.0
-	if waypoints[nav_index].has("radius"):
-		reach = maxf(6000.0, float(waypoints[nav_index].get("radius", 0.0)))
+	var reach := float(waypoints[nav_index].get("radius", 1000.0))
+	if reach <= 0.0:
+		reach = 1000.0
 	var wp: Vector3 = waypoints[nav_index].pos
 	var d2wp: float = Vector2(wp.x - player.global_position.x, wp.z - player.global_position.z).length()
 	if d2wp <= reach:
