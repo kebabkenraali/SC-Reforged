@@ -2,6 +2,7 @@
 .godot/
 *.import
 __pycache__/
+*.uid
 
 # Engine binaries and other large tools (download separately, see README)
 tools/godot/*.exe
