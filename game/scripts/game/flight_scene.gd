@@ -1804,7 +1804,10 @@ func _autopilot() -> void:
 	# hand over to the landing autopilot - the original lands at the base.
 	# Checked FIRST: once the goal is met the autopilot must not drift into
 	# the ground-attack loop (it never hands over from there).
-	var remaining := enemies.filter(func(e): return e.alive).size()
+	var remaining := 0
+	for e in enemies:
+		if is_instance_valid(e) and e.alive:
+			remaining += 1
 	# nav_index is a waypoint INDEX: size()-1 is the last stop (the handover
 	# fired too late before - the main print shows mini(nav_index+1, size)).
 	if waypoints.size() > 0 and nav_index >= waypoints.size() - 1 and (remaining == 0 or _script_success):
@@ -1830,7 +1833,11 @@ func _autopilot() -> void:
 	if best == null:
 		# Nothing in the air: ground targets if any, otherwise fly the route
 		# (scene ships only appear when the route reaches their area).
-		var ground_left: bool = targets.any(func(t): return t.alive and t.has_method("center"))
+		var ground_left: bool = false
+		for t in targets:
+			if is_instance_valid(t) and t.alive and t.has_method("center"):
+				ground_left = true
+				break
 		if ground_left:
 			_autopilot_ground()
 		elif nav_index < waypoints.size():
@@ -2832,7 +2839,7 @@ func _landing_end_sign(center: Vector3, axis: Vector3, half: float) -> float:
 
 ## Testing: 8 km final, slightly high and left, heading for the home runway.
 func _setup_approach() -> void:
-	nav_index = maxi(0, waypoints.size() - 1)
+	nav_index = max(0, waypoints.size() - 1)
 	# Place the aircraft on a stable final: 8 km out from the nearest runway
 	# end, on the extended centreline, 120 m above the 3° glide slope,
 	# facing into the runway. Computed horizontally so the threshold
@@ -3089,13 +3096,19 @@ func _end_mission(reason: String) -> void:
 	for i in waypoints.size():
 		wps.append({"name": waypoints[i].name, "reached": i < nav_index or (result == "success" and i == waypoints.size() - 1)})
 	var t := _sim_time - _t_start
-	var allies_alive := allies.filter(func(a): return a.alive or a.get_meta("removed", false)).size()
+	var allies_alive := 0
+	for a in allies:
+		if is_instance_valid(a) and (a.alive or a.get_meta("removed", false)):
+			allies_alive += 1
+	var targets_dead := 0
+	for tgt in targets:
+		if is_instance_valid(tgt) and not tgt.alive:
+			targets_dead += 1
 	var d = Debrief.new()
 	d.report = {"result": result, "reason": why, "mission": mission.name, "file": mission_file.get_file().get_basename(),
 		"waypoints": wps, "log": radio_log,
 		"stats": [["Flight time", "%d:%02d" % [int(t) / 60, int(t) % 60]],
-			["Targets destroyed", "%d / %d" % [targets.filter(func(x): return not x.alive).size(),
-				targets.filter(func(x): return not x.alive).size() + targets_left()]],
+			["Targets destroyed", "%d / %d" % [targets_dead, targets_dead + targets_left()]],
 			["Air kills", stats.air_kills], ["Ground kills", stats.ground_kills],
 			["Wingman kills", stats.wingman_air_kills + stats.wingman_ground_kills],
 			["Rounds fired", stats.shots], ["Missiles fired", stats.missiles], ["Bombs dropped", stats.bombs],
@@ -3142,7 +3155,11 @@ func targets_left() -> int:
 			var p: Dictionary = mission.parts[pi]
 			if p.side != side and not _escort_ids.has(p.id):
 				pending += 1
-	return targets.filter(func(t): return t.alive).size() + pending
+	var alive: int = 0
+	for t in targets:
+		if is_instance_valid(t) and t.alive:
+			alive += 1
+	return alive + pending
 
 
 func _on_enemy_destroyed(e) -> void:
@@ -3158,7 +3175,11 @@ func _on_enemy_destroyed(e) -> void:
 	_say("%s destroyed! (%d)" % [e.display_name, kills], 3.0)
 	# Radio: the victim's own last words, then the wingman's call on the kill.
 	var victim := _actor(e)
-	var cries: Array = R_DEATH.filter(func(id): return SCData.radio(victim).msgs.has(id)) if victim != "" else []
+	var cries: Array = []
+	if victim != "":
+		for id in R_DEATH:
+			if SCData.radio(victim).msgs.has(id):
+				cries.append(id)
 	if not cries.is_empty():
 		radio_call(victim, cries[randi() % cries.size()], 5.0)
 	if e.get("last_hit_by") == player or e.get("last_hit_by") == null:
