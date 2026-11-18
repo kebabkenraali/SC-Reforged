@@ -72,6 +72,7 @@ const TRAVEL_MAX_SCALE := 8.0     # cap for the time warp
 const TRAVEL_SAFE_M := 20000.0    # enemies inside this block / cancel travel
 const TRAVEL_ARRIVE_M := 5000.0   # arrival radius (also uses the waypoint radius)
 var _ft_auto := false             # headless --fasttravel auto-engage (once)
+var _ft_saved_leaders := {}       # ally -> original formation_leader, saved while fast travel is active
 var _log_timer := 0.0
 var _ap_debug := ""
 var _ap_run_out := false
@@ -1061,6 +1062,16 @@ func _toggle_fast_travel() -> void:
 	autopilot_land = false
 	autopilot_waypoint = false
 	fast_travel = true
+	# Wingmen and escorted craft follow the player during fast travel: save
+	# their formation leaders and point them at the player so _fly_formation()
+	# keeps them in formation as the player warps to the waypoint. Restored
+	# in _stop_fast_travel().
+	_ft_saved_leaders.clear()
+	for a in allies:
+		if a != null and is_instance_valid(a) and a != player and a.alive and not a.on_ground:
+			if not _ft_saved_leaders.has(a):
+				_ft_saved_leaders[a] = a.formation_leader
+			a.formation_leader = player
 	_say("Fast travel to %s - F7 to cancel." % waypoints[nav_index].name, 3.0)
 	print("FASTTRAVEL engage wp=%d/%d dist=%.0f" % [nav_index + 1, waypoints.size(),
 		Vector2(waypoints[nav_index].pos.x - player.global_position.x,
@@ -1114,6 +1125,12 @@ func _update_fast_travel(dt: float) -> void:
 
 func _stop_fast_travel(msg: String) -> void:
 	fast_travel = false
+	# Restore formation leaders so wingmen and escorted craft resume their
+	# normal AI (formation on their original lead, route following, etc.).
+	for a, leader in _ft_saved_leaders:
+		if a != null and is_instance_valid(a):
+			a.formation_leader = leader
+	_ft_saved_leaders.clear()
 	_travel_scale = 1.0
 	if _travel_base <= 1.05:
 		Engine.time_scale = 1.0
