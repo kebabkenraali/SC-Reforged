@@ -86,7 +86,10 @@ func mount(dir: String) -> String:
 		if not "/" in n:
 			files[n] = [img.file_source(n), 0, img.files[n][1]]
 	# Archive search order follows SC.CFG: liltre, bigtre, voclist (first wins).
-	for tre_name in ["VOCLIST.TRE", "BIGTRE.TRE"]:
+	# TOBIGTRE.TRE is the Tactical Operations add-on: it is merged last so the
+	# base game keeps priority on shared names, but its 30 missions and art
+	# become readable from the player's own CD install.
+	for tre_name in ["VOCLIST.TRE", "BIGTRE.TRE", "TOBIGTRE.TRE"]:
 		var src = img.file_source(tre_name)
 		if src != null:
 			files.merge(Tre.index(src), true)
@@ -165,9 +168,24 @@ func terrain_names() -> PackedStringArray:
 	return out
 
 
+## Tactical Operations uses suffixed area names ("SYRIA22") for missions that
+## reuse the base game's terrain (SYRIA.PAK). Map those aliases to the real PAK
+## so the add-on missions read their terrain from the original install.
+const TERRAIN_ALIASES := {
+	"SYRIA22": "SYRIA", "SOAFRI22": "SOAFRICA", "SIBER22": "SIBERIA",
+	"HAWAII22": "HAWAII", "TURKEY22": "TURKEY",
+}
+
+
+func has_terrain(area: String) -> bool:
+	var pak_name: String = TERRAIN_ALIASES.get(area.to_upper(), area)
+	return has(pak_name + ".PAK")
+
+
 func terrain(area: String):
-	var buf := read(area + ".PAK")
-	return Terrain.load_from(buf, area) if buf.size() > 0 else null
+	var pak_name: String = TERRAIN_ALIASES.get(area.to_upper(), area)
+	var buf := read(pak_name + ".PAK")
+	return Terrain.load_from(buf, pak_name) if buf.size() > 0 else null
 
 
 ## Palette a terrain area uses, found from the mission files (WRLD/TERA + PALT).
@@ -194,10 +212,11 @@ func mission(name: String):
 ## Playable missions: [{ file, name, area }], only those whose terrain exists.
 func missions() -> Array:
 	if _missions.is_empty():
-		var areas := terrain_names()
 		for f in list("MISSIONS/", ".IFF"):
 			var m = mission(f)
-			if m != null and m.area in areas and m.player_part() != null:
+			# terrain() resolves Tactical Operations area aliases such as
+			# SYRIA22 -> SYRIA.PAK, which a raw root-PAK name check misses.
+			if m != null and has_terrain(m.area) and m.player_part() != null:
 				_missions.append({"file": f, "name": m.name, "area": m.area})
 	return _missions
 

@@ -22,6 +22,30 @@ python tools\decompile\pura_tulkit.py "C:\Gog games\Strike Commander"
 
 (vaatii `pip install capstone`). Skripti on omaa koodia eikä sisällä alkuperäistä aineistoa.
 
+## Työkalut (tarkistettu 21.11.2026)
+
+Työkalut ovat projektin omissa `tools/`-kansioissa ja tarvittavat Python-paketit
+ovat asennettuna. Alkuperäinen data on pelaajan omassa asennuksessa (tässä
+`C:/AI_Projektit/SC-REFORGED`), ei repositorissa.
+
+```powershell
+# 1) MZ-ohjelmien purkaminen "atomeiksi" (capstone 5.0.9)
+python tools\decompile\pura_tulkit.py "C:/AI_Projektit/SC-REFORGED"
+#    -> STRIKE.EXE:n PROG-tulkki ja OPTTEST.EXE:n overlayt tähän kansioon
+
+# 2) Animaatioiden tallennus DOS-emulaattorilla (unicorn 2.1.4)
+$env:SC_GAME_DIR = "C:/AI_Projektit/SC-REFORGED"
+python tools\cutscenes\trace_mid.py 1        # MID1:n display list -> JSON
+python tools\cutscenes\subtitles.py          # tekstitykset
+
+# 3) Tarkistus: kaikki pelidata luetaan alkuperäisistä tiedostoista
+.\Aja_Testit.ps1 -Taydet 0 -Data "C:/AI_Projektit/SC-REFORGED"
+```
+
+`tools/cutscenes/sclib.py` lukee SC.dat:n suoraan, `emu.py` ajaa OPTTEST.EXE:n
+unicornilla ja `shp.py` purkaa OPTSHPS/CONVSHPS-kuvat. Paketit: capstone, unicorn,
+pefile, pillow, numpy. Mitään näistä tuotoksista ei saa commitoida.
+
 ## Sisältö
 
 | Polku | Mitä |

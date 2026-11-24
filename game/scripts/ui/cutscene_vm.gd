@@ -63,10 +63,17 @@ func _ready() -> void:
 	black.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(black)
 	var arc := AspectRatioContainer.new()
-	arc.ratio = 4.0 / 3.0
+	arc.ratio = 320.0 / 200.0
+	arc.alignment_horizontal = AspectRatioContainer.ALIGNMENT_CENTER
+	arc.alignment_vertical = AspectRatioContainer.ALIGNMENT_CENTER
 	arc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# The recorded frames sit high inside the 320x200 canvas; nudge the stage
+	# down so the visible picture is centred on screen.
+	arc.offset_top = 50
+	arc.offset_bottom = 50
 	add_child(arc)
 	_view = TextureRect.new()
+	_view.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_view.stretch_mode = TextureRect.STRETCH_SCALE
 	_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	arc.add_child(_view)
@@ -135,6 +142,16 @@ func play() -> void:
 		print("CUTSCENE_VM: parsed as %s" % result.get_type())
 		finished.emit()
 		return
+	# The recorded story timelines contain a "music" op, but establishing
+	# shots and transports do not. Give every cutscene its score so it is never
+	# silent after the intro.
+	var has_music := false
+	for op in _ops:
+		if op[1] == "music":
+			has_music = true
+			break
+	if not has_music:
+		Music.play("MIDGAMES/AMUSIC.PAK", 2, 0, false)
 	set_process(true)
 	await finished
 	print("CUTSCENE_VM: finished")
@@ -421,6 +438,11 @@ func _frames(archive: String, entry: int) -> Array:
 		var a: Dictionary = _archives[archive]
 		if entry < a.entries.size():
 			shp = Shape.unpack(a.entries[entry], a.flags[entry] if entry < a.flags.size() else -1)
+		else:
+			push_warning("Cutscene: shape %s#%d is outside the archive (%d entries) - frame will not draw" \
+				% [archive, entry, a.entries.size()])
+	if shp.is_empty():
+		push_warning("Cutscene: shape %s#%d has no usable data - frame will not draw" % [archive, entry])
 	var out := []
 	for f in Shape.frames(shp):
 		var d := Shape.decode(f)
@@ -441,14 +463,22 @@ func _frames(archive: String, entry: int) -> Array:
 	return out
 
 
-func _voice(archive: String, entry: int) -> void:
+func _voice_stream(archive: String, entry: int) -> AudioStream:
 	if not _archives.has(archive):
-		var buf := SCData.read(archive)
+		var buf: PackedByteArray = SCData.read(archive)
 		_archives[archive] = {"entries": Pak.entries(buf), "flags": Pak.flags(buf)}
 	var a: Dictionary = _archives[archive]
 	if entry < 0 or entry >= a.entries.size():
-		return
-	var s := Voc.to_stream(a.entries[entry])
+		push_warning("Cutscene: voice %s#%d is outside the archive - line will be silent" % [archive, entry])
+		return null
+	var s: AudioStream = Voc.to_stream(a.entries[entry])
+	if s == null:
+		push_warning("Cutscene: voice %s#%d could not be decoded - line will be silent" % [archive, entry])
+	return s
+
+
+func _voice(archive: String, entry: int) -> void:
+	var s: AudioStream = _voice_stream(archive, entry)
 	if s == null:
 		return
 	for p in _voices:

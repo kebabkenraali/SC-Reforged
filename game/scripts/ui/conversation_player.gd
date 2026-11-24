@@ -114,7 +114,14 @@ func play() -> Dictionary:
 	var steps: Array = Conv.parse(Shape.unpack(entries[conv_index]))
 	var speaker := ""
 	var i := 0
+	# Conditions are not decoded, so a 0c/0b jump can point backwards and loop
+	# forever. Bound the run to two passes over the script.
+	var guard := 0
 	while i < steps.size() and not _skip:
+		guard += 1
+		if guard > steps.size() * 2:
+			push_warning("Conversation %d exceeded its step budget - breaking a scripted loop" % conv_index)
+			break
 		var s: Dictionary = steps[i]
 		i += 1
 		match s.op:
@@ -132,8 +139,7 @@ func play() -> Dictionary:
 			0x04:
 				await _say(speaker, s.voc, s.text)
 			0x0a:
-				_face.texture = null
-				_mouth.texture = null
+				_clear_talker()
 				await _say("", s.voc, s.text)
 			0x0b:
 				result.accepted = await _ask(["Yes", "No"]) == 0
@@ -181,7 +187,7 @@ func _compose_back(name: String) -> Dictionary:
 		var fr: Array = Art.frames(archive, layer.shape)
 		if not fr.is_empty():
 			Art.blit(canvas, fr[0], Vector2i(0, layer.y))
-		var pals := Art._entries(Art.ARCHIVES[archive][1])
+		var pals := Art._entries(Art.archives()[archive][1])
 		if layer.palette >= 0 and layer.palette < pals.size():
 			pal = Shape.apply_palette(pal, pals[layer.palette])
 	return {"canvas": canvas, "palette": pal}
@@ -198,13 +204,23 @@ func _show_wide(bg: String) -> void:
 	var pal: PackedColorArray = b.palette
 	var gf = Art.gameflow()
 	if gf.figure_palette >= 0:
-		pal = Shape.apply_palette(pal, Art._entries(Art.ARCHIVES.conv[1])[gf.figure_palette])
+		pal = Shape.apply_palette(pal, Art._entries(Art.archives().conv[1])[gf.figure_palette])
 	_bg.set_meta("palette", pal)
 	_bg.texture = _tex(Art.canvas_image(b.canvas, pal))
-	_face.texture = null
-	_mouth.texture = null
+	_clear_talker()
 	for c in _figures.get_children():
 		c.queue_free()
+
+
+## Drops every trace of the previous close-up so a wide shot or narration can
+## never animate a stale mouth (or leave the previous speaker's face on screen).
+func _clear_talker() -> void:
+	_talking = false
+	_mouth_frames.clear()
+	_face_still = null
+	_blink_tex = null
+	_face.texture = null
+	_mouth.texture = null
 
 
 func _add_figure(name: String, at: Vector2i) -> void:
@@ -234,14 +250,14 @@ func _show_closeup(bg: String, name: String, at: Vector2i, mood := 255) -> void:
 	var gf = Art.gameflow()
 	var pal: PackedColorArray = b.palette
 	if gf.face_palette >= 0:
-		pal = Shape.apply_palette(pal, Art._entries(Art.ARCHIVES.conv[1])[gf.face_palette])
-	var fr: Array = Art.frames("conv", gf.faces.get(name, -1))
+		pal = Shape.apply_palette(pal, Art._entries(Art.archives().conv[1])[gf.face_palette])
+	var shape: int = gf.faces.get(name, -1)
+	if shape < 0:
+		push_warning("Conversation: no FACE entry for speaker '%s' (head will be missing)" % name)
+	var fr: Array = Art.frames("conv", shape)
 	_bg.texture = _tex(Art.canvas_image(b.canvas, pal))
-	_mouth.texture = null
-	_mouth_frames.clear()
-	_blink_tex = null
+	_clear_talker()
 	if fr.is_empty():
-		_face.texture = null
 		return
 	# Layer order of the original: head, expression (the line's mood), mouth,
 	# then hair / forehead (frame 1) and shoulders (frame 34) over them.
@@ -251,6 +267,8 @@ func _show_closeup(bg: String, name: String, at: Vector2i, mood := 255) -> void:
 	for k in MOUTH:
 		if k < fr.size():
 			_mouth_frames.append(_tex(_face_image(fr, [expr, k], at, pal)))
+	if _mouth_frames.is_empty():
+		push_warning("Conversation: face '%s' has no mouth frames - head will not talk" % name)
 	if BLINK < fr.size():
 		_blink_tex = _tex(_face_image(fr, [BLINK], at, pal))
 
@@ -279,12 +297,16 @@ func _say(speaker: String, voc: String, text: String) -> void:
 		var data := SCData.read("F:%s.VOC" % voc.to_upper())
 		if data.size() > 0:
 			stream = Voc.to_stream(data)
+		if stream == null:
+			push_warning("Conversation: voice '%s' is missing or could not be decoded - using text timing" % voc)
 	var duration := maxf(2.0, text.length() * 0.06)
 	if stream != null:
 		_voice.stream = stream
 		_voice.play()
 		duration = stream.get_length() + 0.35
-	_talking = stream != null and not _mouth_frames.is_empty()
+	# Lip-sync must not depend on the recording: a missing/corrupt VOC used to
+	# leave the speaker's head completely still even though the line was shown.
+	_talking = not _mouth_frames.is_empty()
 	# Auto-advance in demo/headless mode (--demo or --auto)
 	var auto_advance := OS.get_cmdline_user_args().has("--demo") or OS.get_cmdline_user_args().has("--auto")
 	var t := 0.0

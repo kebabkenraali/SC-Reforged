@@ -11,7 +11,7 @@ found while decoding (docs/PROG_VM.md, docs/GAMEFLOW_VM.md).
 
 Requires: pip install capstone
 """
-import os, struct, sys, collections
+import os, struct, sys, collections, re
 from capstone import Cs, CS_ARCH_X86, CS_MODE_16
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -77,10 +77,37 @@ def write(path, text):
     print("wrote", os.path.relpath(path, ROOT))
 
 
+def tactical_ops(game):
+    """Disassemble the Tactical Operations add-on executable's overlays.
+
+    TOPTTST1.EXE uses the same FBOV overlay layout as OPTTEST.EXE. The 30 new
+    missions themselves live in TOBIGTRE.TRE on the CD (see
+    docs/TACTICAL_OPS_TEST_PLAN.md); this function only handles the program.
+    """
+    path = os.path.join(game, "TOPTTST1.EXE")
+    if not os.path.isfile(path):
+        print("no TOPTTST1.EXE in", game)
+        return
+    d = open(path, "rb").read()
+    segs = overlay_segments(d)
+    out_dir = os.path.join(OUT, "TOPTTST1.EXE")
+    for s, (b, size, ents) in sorted(segs.items()):
+        lab = {b + off: "ENTRY_%04x:%02x" % (s, e) for e, off in ents.items() if off}
+        write(os.path.join(out_dir, "ovl_%04x.asm" % s), listing(d, b, b + size, lab, b))
+    strings = []
+    for m in re.finditer(rb'[!-~ ]{6,}\x00', d):
+        s = m.group()[:-1].decode('latin1').strip()
+        if len(s) >= 6:
+            strings.append("%06X: %s" % (m.start(), s))
+    write(os.path.join(out_dir, "_strings.txt"), "\n".join(strings) + "\n")
+    print("TOPTTST1.EXE: %d overlay segments, %d strings" % (len(segs), len(strings)))
+
+
 def main():
     game = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SC_GAME_DIR", r"C:\Gog games\Strike Commander")
     strike = open(os.path.join(game, "STRIKE.EXE"), "rb").read()
     opt = open(os.path.join(game, "OPTTEST.EXE"), "rb").read()
+    tactical_ops(game)
 
     # STRIKE.EXE: PROG interpreter (docs/PROG_VM.md)
     seg, table = 0x548A0, 0x55711

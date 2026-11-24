@@ -29,6 +29,7 @@ func _ready() -> void:
 	tabs.add_child(_video_tab())
 	tabs.add_child(_controls_tab())
 	tabs.add_child(_audio_tab())
+	tabs.add_child(_gameplay_tab())
 	tabs.add_child(_data_tab())
 
 	var close := Button.new()
@@ -106,6 +107,15 @@ func _audio_tab() -> Control:
 		b.pressed.connect(Sfx.play_index.bind(i))
 		flow.add_child(b)
 	g.add_child(flow)
+	return g.get_parent().get_parent()
+
+
+func _gameplay_tab() -> Control:
+	var g := _grid("Gameplay")
+	_option(g, "Mode (realistic / arcade)", "game", "mode",
+		[["Realistic", 0], ["Arcade", 1]])
+	_label(g, "Realistic: short lock, original seeker, no tracking windows.")
+	_label(g, "Arcade: longer lock, stronger homing, extra stores, kill-cam windows.")
 	return g.get_parent().get_parent()
 
 

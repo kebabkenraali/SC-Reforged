@@ -33,10 +33,15 @@ func _ready() -> void:
 	black.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(black)
 	var arc := AspectRatioContainer.new()
-	arc.ratio = 4.0 / 3.0
+	arc.ratio = 320.0 / 200.0
+	arc.alignment_horizontal = AspectRatioContainer.ALIGNMENT_CENTER
+	arc.alignment_vertical = AspectRatioContainer.ALIGNMENT_CENTER
 	arc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	arc.offset_top = 50
+	arc.offset_bottom = 50
 	add_child(arc)
 	_stage = Control.new()
+	_stage.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_stage.clip_contents = true
 	arc.add_child(_stage)
 	_base = _rect()
@@ -97,6 +102,9 @@ func play() -> void:
 		finished.emit()
 		return
 	var total := maxf(speech, shots.size() * MIN_SHOT)
+	# Recorded VM timelines carry their own music op; this fallback player does
+	# not, so start the original midgame score here (entry 2 = story music).
+	Music.play("MIDGAMES/AMUSIC.PAK", 2, 0, false)
 	_voice_track(m)
 	var per := total / maxf(1.0, shots.size())
 	for s in shots:

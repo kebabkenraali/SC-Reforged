@@ -105,6 +105,8 @@ func _parse(buf: PackedByteArray) -> bool:
 			cast.append(Iff.cstr(buf, ca.off + i * 9, 9))
 	player_id = cast.find("PLAYER")
 
+	# Some add-on missions list PLAYER twice in CAST; the first index has no
+	# matching PART. Pick the first PLAYER entry that actually has a PART.
 	var ms = Iff.find(c, ["MSGS"])
 	if ms != null:
 		var start: int = ms.off
@@ -131,6 +133,11 @@ func _parse(buf: PackedByteArray) -> bool:
 				"leader": buf.decode_s16(o + 46),
 				"offset": Vector3(buf.decode_s16(o + 48), buf.decode_s16(o + 52), -buf.decode_s16(o + 50)) * FEET,
 				"slots": [buf.decode_s16(o + 54), buf.decode_s16(o + 56), buf.decode_s16(o + 58), buf.decode_s16(o + 60)]})
+	if part_index(player_id) < 0:
+		for i in cast.size():
+			if cast[i].to_upper() == "PLAYER" and part_index(i) >= 0:
+				player_id = i
+				break
 
 	var sp = Iff.find(c, ["SPOT"])
 	if sp != null:
@@ -197,30 +204,54 @@ func nav_plan() -> Array:
 	return out
 
 
-## Gameplay route; preserves the IFF route except for MISN-1A's recommended
-## Nouakchott-first tactic.
+## Gameplay route: the player's route block (a5/a6 + ab texts) with each
+## waypoint's arrival radius. The order is the original mission data's order:
+## Rendezvous -> Land Cargo -> Scenic Nouakchott -> Head Home. An earlier
+## remake-specific override swapped Land Cargo and Scenic Nouakchott, which
+## sent the autopilot west while the escorted C-130 flew to the cargo field.
+## Missions with no route block fall back to their named areas, then to blank
+## areas / SPOTs, so a mission never ends up with an empty route.
 func flight_nav_plan() -> Array:
 	var plan: Array = nav_plan()
-	if file.get_file().get_basename().to_upper() != "MISN-1A":
+	if not plan.is_empty():
+		_fill_waypoint_radii(plan)
 		return plan
 
-	var cargo_index := -1
-	var nouakchott_index := -1
-	for i in plan.size():
-		var label: String = str(plan[i].get("label", "")).to_lower()
-		if cargo_index < 0 and label == "land cargo":
-			cargo_index = i
-		elif nouakchott_index < 0 and label == "scenic nouakchott":
-			nouakchott_index = i
+	# No route block: the original flight_scene fallback used the named scenario
+	# areas as waypoints. Keep that rule (only names longer than one character),
+	# but retain blank areas as a last resort so the route is never empty.
+	var named: Array = []
+	var unnamed: Array = []
+	for a in areas:
+		var wp := {"pos": a.pos, "radius": float(a.radius)}
+		if a.name.length() > 1:
+			wp["label"] = a.name
+			named.append(wp)
+		else:
+			wp["label"] = "WP %d" % unnamed.size()
+			unnamed.append(wp)
+	var fallback: Array = named if not named.is_empty() else unnamed
+	if fallback.is_empty():
+		for s in spots:
+			fallback.append({"pos": s, "label": "WP %d" % fallback.size(), "radius": 0.0})
+	return fallback
 
-	if cargo_index < 0 or nouakchott_index < 0:
-		push_warning("MISN-1A route override could not find Cargo Destination and Nouakchott waypoints.")
-		return plan
 
-	var cargo = plan[cargo_index]
-	plan[cargo_index] = plan[nouakchott_index]
-	plan[nouakchott_index] = cargo
-	return plan
+## Arrival radius of a route waypoint. The original counted a waypoint reached
+## when its scenario area was entered, so the radius is the largest radius of
+## every AREA whose centre is within 3 km (horizontal) of the waypoint. A value
+## of 0.0 means no area matched; callers then apply their own default
+## (_update_nav uses 6 km, fast travel 1 km), which keeps fast travel stopping
+## at the waypoint instead of far short of it.
+func _fill_waypoint_radii(plan: Array) -> void:
+	for wp in plan:
+		if wp.has("radius") and wp.radius != null and float(wp.radius) > 0.0:
+			continue
+		var radius := 0.0
+		for a in areas:
+			if Vector2(a.pos.x - wp.pos.x, a.pos.z - wp.pos.z).length() < 3000.0:
+				radius = maxf(radius, float(a.radius))
+		wp["radius"] = radius
 
 
 ## Parts that are only brought in by an "activate" (90) instruction.

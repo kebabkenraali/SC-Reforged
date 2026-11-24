@@ -333,15 +333,20 @@ func play_cutscene(n: int) -> void:
 
 ## Story cut-scene MIDn with its recorded speech.
 func play_story(n: int) -> void:
-	# Original staging recorded from OPTTEST.EXE when available.
-	if CutsceneVM.exists(n):
+	# GAMEFLO2.IFF reuses base story numbers (2, 3, 5). Those are the ones the
+	# add-on supplies its own art for (TO1MID1-3.PAK / TOMIDVOC.PAK /
+	# MIDGAMS2.IFF). Every other number falls through to the original recorded
+	# timeline or the base game's Midgame player.
+	var addon_story: bool = campaign.tactical and n in [2, 3, 5] and Midgame.exists(n)
+	if not addon_story and CutsceneVM.exists(n):
 		var v = CutsceneVM.new()
 		v.number = n
 		add_child(v)
 		await v.play()
 		v.queue_free()
 		return
-	if not Midgame.exists(n):
+	if not Midgame.exists(n) and not addon_story:
+		push_warning("BASE: story %d is not available in this data set." % n)
 		return
 	var p = CutscenePlayer.new()
 	p.number = n
@@ -368,7 +373,7 @@ func play_transport(n: int) -> void:
 ## to the base. The flight itself starts after the effect list (fly_mission).
 func choose_loadout(n: int) -> bool:
 	var files: Array = campaign.mission_files()
-	if n < 0 or n >= files.size():
+	if n < 0 or n >= files.size() or files[n] == "":
 		toast("Mission %d is not available." % n)
 		return false
 	# Automated runs (headless testing or --autopilot) skip the interactive
@@ -388,7 +393,7 @@ func choose_loadout(n: int) -> bool:
 ## (FlightScene.campaign_report) or null = no such mission.
 func fly_mission(n: int) -> Variant:
 	var files: Array = campaign.mission_files()
-	if n < 0 or n >= files.size():
+	if n < 0 or n >= files.size() or files[n] == "":
 		toast("Mission %d is not available." % n)
 		return null
 	_pending_mission_file = files[n]
@@ -444,6 +449,7 @@ func _show_loadout_screen(mission_file: String) -> void:
 func _on_loadout_fly_requested(loadout: Dictionary) -> void:
 	# Store the chosen loadout; fly_mission() reads it and starts the flight.
 	_selected_loadout = loadout
+	_consume_loadout(loadout)
 	_loadout_screen.queue_free()
 	_loadout_screen = null
 	_stage.visible = true
@@ -462,19 +468,31 @@ func _on_loadout_back_requested() -> void:
 
 
 func _build_inventory() -> Dictionary:
-	# Simplified inventory - in full game this reads from campaign ledger
-	# For now, return generous amounts of all weapons
+	# The stock is the campaign's own WEAPONS array (+0x261); when a fresh
+	# campaign has none, fall back to twice the aircraft's original loadout so
+	# the weapon screen is still usable.
 	var inv := {}
+	if campaign == null:
+		return inv
 	var model_data = SCData.model("OBJECTS/F-16DES.IFF")
-	if model_data != null:
-		var default_loadout = Weapons.loadout(model_data)
-		for wname in default_loadout:
-			inv[wname] = int(default_loadout[wname]) * 3  # 3x the default loadout
-	# Add all weapon types
-	for wname in ["SWINDERM", "SWINDERJ", "AMRAAM", "AGM-65D", "MK82", "MK20", "DURANDAL"]:
-		if not inv.has(wname):
-			inv[wname] = 12
+	var defaults: Dictionary = Weapons.loadout(model_data) if model_data != null else {}
+	for i in campaign.WEAPONS.size():
+		var wname: String = campaign.WEAPONS[i]
+		if not (Weapons.is_missile(wname) or Weapons.is_bomb(wname)):
+			continue
+		var stock: int = int(campaign.weapons[i]) if i < campaign.weapons.size() else 0
+		inv[wname] = maxi(stock, int(defaults.get(wname, 0)) * 2)
 	return inv
+
+
+## Records the weapons taken from the campaign stock when the player flies.
+func _consume_loadout(loadout: Dictionary) -> void:
+	if campaign == null or loadout == null:
+		return
+	for i in campaign.WEAPONS.size():
+		var wname: String = campaign.WEAPONS[i]
+		if loadout.has(wname) and i < campaign.weapons.size():
+			campaign.weapons[i] = maxi(0, int(campaign.weapons[i]) - int(loadout[wname]))
 
 
 ## Demo build: shown after the first mission has been flown successfully.

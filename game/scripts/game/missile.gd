@@ -14,6 +14,7 @@ var shooter: Node3D
 var velocity := Vector3.ZERO
 var life := 0.0
 var alive := true
+var arcade := false          # Arcade mode: stronger seeker authority
 var _trail: CPUParticles3D
 
 
@@ -86,7 +87,7 @@ func step(dt: float, terrain) -> bool:
 		var ang := cur.angle_to(desired)
 		# Close to the target the missile needs extra authority to follow
 		# steering maneuvers (the last seconds decide the hit).
-		var authority: float = spec.turn
+		var authority: float = spec.turn * (1.6 if arcade else 1.0)
 		if decoy_pos == null and target != null and target.get("velocity") != null:
 			var d2: float = (target.global_position - global_position).length()
 			if d2 < 800.0:

@@ -17,6 +17,7 @@ const Bomb = preload("res://scripts/game/bomb.gd")
 const MissionVM = preload("res://scripts/game/mission_vm.gd")
 const AircraftMeshes = preload("res://scripts/game/aircraft_meshes.gd")
 const ExternalModels = preload("res://scripts/game/external_models.gd")
+const Iff = preload("res://scripts/formats/iff.gd")
 
 const ENEMY_MODELS := ["OBJECTS/MIG29.IFF", "OBJECTS/MIG21.IFF", "OBJECTS/MIG29GRA.IFF"]
 const BULLET_SPEED := 1050.0
@@ -43,6 +44,7 @@ const GLIDE_TCH := 15.0
 var area := "CANYON"
 var plane_model := "OBJECTS/F-16DES.IFF"
 var camera_mode := 0
+var vr_active := false        # OpenXR headset: place the rig at the pilot's eyes
 var mission_file := ""
 var campaign_mode := false
 var campaign: Object = null          # Campaign instance (for loadout access)
@@ -51,6 +53,8 @@ var debug_log := false        # testing: print player and combat state every sec
 var autopilot := false        # testing: the player's aircraft attacks the nearest enemy itself
 var endless_ammo := false     # testing: missiles/countermeasures are never depleted
 var kill_enemies := false     # testing cheat (--kill_enemies): every enemy / target dies as it appears
+var no_enemies := false       # testing (--no_enemies): no hostile aircraft or defences
+var god_mode := false         # testing cheat (--god): the player aircraft cannot be damaged
 var _loadout := {}            # the aircraft's original from the WPNS loadout, filled up by endless_ammo
 var bomb_run := false         # testing: start at the computed release point for a mission target
 var debrief_after := -1.0     # testing: end the mission (as landed) after this many seconds
@@ -64,14 +68,17 @@ var approach_speed := 115.0   # --approach_speed=M/S
 # Autopilot modes (toggled by player input)
 var autopilot_waypoint := false   # follow mission waypoints
 var autopilot_land := false       # land at home runway
-# Fast travel to the active waypoint (time-warp autopilot, toggled by F7).
-var fast_travel := false
-var _travel_scale := 1.0          # current applied time-warp factor
-var _travel_base := 1.0           # Engine.time_scale before travel (1 normally)
-const TRAVEL_MAX_SCALE := 8.0     # cap for the time warp
-const TRAVEL_SAFE_M := 20000.0    # enemies inside this block / cancel travel
-const TRAVEL_ARRIVE_M := 5000.0   # arrival radius (also uses the waypoint radius)
-var _ft_auto := false             # headless --fasttravel auto-engage (once)
+# Waypoint approach reposition (F7): the old fast travel jumped straight onto
+# the waypoint, which skipped the scenario area and left escorts flying the
+# wrong leg. Instead the player and the friendly aircraft with them are placed
+# on the approach, 10 km short of the active waypoint; the route and its scene
+# triggers are still ahead of them.
+var approach_jump := false        # true while the short reposition flyby plays
+var _ft_flyby_left := 0.0         # real seconds left in that flyby
+const JUMP_ANIM_S := 3.0          # length of the original-style jump cutscene
+const TRAVEL_SAFE_M := 20000.0    # enemies inside this block the jump
+const APPROACH_OFFSET_M := 10000.0  # spawn this far before the waypoint
+var _approach_done_nav := -1        # last waypoint already repositioned by --fasttravel
 var _log_timer := 0.0
 var _ap_debug := ""
 var _ap_run_out := false
@@ -122,6 +129,9 @@ var _pal: PackedColorArray
 var _smooth := true
 var _activating := false
 var cockpit_model: MeshInstance3D   # original 3D cockpit (visible in cockpit view)
+var cockpit_instruments: Node3D = null  # live gauges from the original FORM:CKPT layout
+var cockpit_windows = null              # kill-cam + event windows (Arcade / both modes)
+var _pilot_node: Node3D = null      # small procedural pilot silhouette below the pit
 
 var terrain
 var player
@@ -149,7 +159,6 @@ var _release_cooldown := 0.0
 
 func _ready() -> void:
 	
-	_travel_base = Engine.time_scale
 	var t0 := Time.get_ticks_msec()
 	if mission_file != "":
 		mission = SCData.mission(mission_file)
@@ -159,6 +168,10 @@ func _ready() -> void:
 	var world_pal: PackedColorArray = SCData.palette(pal_name)
 	var obj_pal: PackedColorArray = SCData.palette()
 	var smooth: bool = Settings.get_value("video", "smooth_textures")
+	# Free flight has no _setup_mission call, but the cockpit and ground models
+	# still need the object palette and texture setting.
+	_pal = obj_pal
+	_smooth = smooth
 
 	_build_environment()
 	terrain = SCData.terrain(area)
@@ -192,7 +205,7 @@ func _ready() -> void:
 	add_child(_radio_player)
 	_place_player()
 
-	for i in (4 if mission == null else 0):
+	for i in (0 if no_enemies or mission != null else 4):
 		var e = _spawn(ENEMY_MODELS[i % ENEMY_MODELS.size()], obj_pal, smooth)
 		if e == null:
 			continue
@@ -204,7 +217,8 @@ func _ready() -> void:
 
 	for e in enemies:
 		e.hostile = true
-	_setup_air_defences()
+	if not no_enemies:
+		_setup_air_defences()
 	for o in ground_objects:
 		_max_object_height = maxf(_max_object_height, o.global_position.y + o.radius * 2.0)
 
@@ -221,7 +235,9 @@ func _ready() -> void:
 	rig = CameraRig.new()
 	rig.target = player
 	rig.mode = camera_mode
+	rig.vr_active = vr_active
 	add_child(rig)
+	_setup_cockpit_model()
 
 	var layer := CanvasLayer.new()
 	add_child(layer)
@@ -236,6 +252,8 @@ func _ready() -> void:
 	hud = Hud.new()
 	hud.scene = self
 	layer.add_child(hud)
+	if cockpit_instruments != null:
+		cockpit_instruments.attach_hud(hud, layer)
 	for pm in _pending_messages:
 		hud.message(pm[0], pm[1])
 	_pause = PauseMenu.new()
@@ -286,7 +304,6 @@ func _spawn(model_name: String, pal: PackedColorArray, smooth: bool):
 	add_child(a)
 	if player != null:            # the player is created first and heard in the cockpit
 		Sfx.attach_engine(a)
-		_setup_cockpit_model()
 	return a
 
 
@@ -311,6 +328,7 @@ func _setup_mission(pal: PackedColorArray, smooth: bool) -> void:
 	player = _spawn("OBJECTS/%s.IFF" % start.model, pal, smooth)
 	if player == null:
 		player = _spawn(plane_model, pal, smooth)
+	player.god_mode = god_mode
 	
 	# Apply custom loadout from campaign (set by the loadout screen).
 	if campaign != null:
@@ -325,12 +343,9 @@ func _setup_mission(pal: PackedColorArray, smooth: bool) -> void:
 	_part_nodes[mission.parts.find(start)] = player
 	# The player's route block gives the waypoints and their texts; fall back to areas.
 	for wp in mission.flight_nav_plan():
-		var radius := 0.0
-		for a in mission.areas:
-			if Vector2(a.pos.x - wp.pos.x, a.pos.z - wp.pos.z).length() < 3000.0:
-				radius = maxf(radius, float(a.radius))
-		waypoints.append({"name": wp.label if wp.label != "" else "WP %d" % (waypoints.size() + 1),
-			"pos": wp.pos, "radius": radius})
+		var radius: float = float(wp.get("radius", 0.0))
+		var wp_name: String = wp.get("label", "") if wp.get("label", "") != "" else "WP %d" % (waypoints.size() + 1)
+		waypoints.append({"name": wp_name, "pos": wp.pos, "radius": radius})
 	if waypoints.is_empty():
 		for a in mission.areas:
 			if a.name.length() > 1:
@@ -419,6 +434,10 @@ func _spawn_part(i: int, spawn_pos_override: Variant = null):
 			if sp < mission.spots.size():
 				a.route.append(mission.spots[sp])
 		if team != 1:  # enemy
+			if no_enemies:
+				a.hostile = false
+				a.attack_ids = []
+				a.missile_cooldown = 1e9
 			a.destroyed.connect(_on_enemy_destroyed)
 			a.crashed.connect(_on_enemy_destroyed)
 			enemies.append(a)
@@ -556,6 +575,10 @@ func _radio_pump() -> void:
 		_radio_player.play()
 		dur = voice.get_length() + 0.5
 	radio_log.append("%s: %s" % [it.speaker, it.text])
+	if cockpit_windows != null:
+		var low := String(it.text).to_lower()
+		if low.contains("mission accomplished") or low.contains("we're safe") or low.contains("runway is clear"):
+			cockpit_windows.show_event("%s: %s" % [it.speaker, it.text], 5.0)
 	if DisplayServer.get_name() == "headless":
 		print("RADIO [%s #%d%s] %s: %s" % [it.actor, it.id, " voice %.1fs" % voice.get_length() if voice != null else "", it.speaker, it.text])
 	if hud != null:
@@ -959,11 +982,33 @@ func vm_action_done(key: int) -> bool:
 			var sp: Vector3 = mission.spots[act.arg]
 			var flat := Vector2(sp.x - a.global_position.x, sp.z - a.global_position.z).length()
 			if act.op == 0xa2:
-				# Landed: over the spot and down near the ground.
+				# Landed: over the spot and down near the ground. The transport
+				# then rolls clear of the runway before the script removes it.
 				var g2: float = terrain.height_at(a.global_position.x, a.global_position.z) if terrain else 0.0
 				if flat < 1500.0 and a.global_position.y - g2 < 120.0:
-					vm_remove(key)
-					return true
+					if not act.has("taxi_to"):
+						var fwd: Vector3 = -a.global_transform.basis.z
+						fwd.y = 0.0
+						fwd = fwd.normalized()
+						var side: Vector3 = fwd.cross(Vector3.UP).normalized()
+						var spot: Vector3 = a.global_position + fwd * 220.0 + side * 150.0
+						spot.y = (terrain.height_at(spot.x, spot.z) if terrain else 0.0) + 2.2
+						act.taxi_to = spot
+						act.taxi_t0 = _sim_time
+						a.taxi_to = spot
+						print("TRANSPORT landed, taxiing aside to %s" % str(spot))
+					var elapsed: float = _sim_time - float(act.taxi_t0)
+					var parked: bool = a.global_position.distance_to(act.taxi_to) < 30.0 \
+						or (elapsed > 1.0 and a.speed() < 1.0) or elapsed > 30.0
+					if parked or not a.alive:
+						a.taxi_to = null
+						if not act.has("event_shown"):
+							act.event_shown = true
+							if cockpit_windows != null:
+								cockpit_windows.show_event("Escort aircraft landed - mission accomplished!", 6.0)
+						vm_remove(key)
+						return true
+					return false
 				return false
 			return flat < 1500.0
 		0xa7:
@@ -1014,11 +1059,9 @@ func _update_scenes() -> void:
 ## Advances the player's route when a waypoint is reached. The original's
 ## "waypoint" was the scenario area - arrival radius is the area radius.
 func _update_nav() -> void:
-	# While the time warp is engaged, _update_fast_travel() owns route
-	# progression; otherwise it would silently skip past the active waypoint
-	# (its 6 km reach is larger than the warp's arrival check) and the plane
-	# would fly the whole route without ever stopping.
-	if fast_travel:
+	# A reposition jump has already advanced the route; ignore the arrival check
+	# until the flyby finishes so the same waypoint is not counted twice.
+	if approach_jump:
 		return
 	if waypoints.is_empty() or nav_index >= waypoints.size() or player.on_ground:
 		return
@@ -1028,99 +1071,152 @@ func _update_nav() -> void:
 		reach = maxf(6000.0, float(wp.radius))
 	if Vector2(wp.pos.x - player.global_position.x, wp.pos.z - player.global_position.z).length() < reach:
 		nav_index += 1
+		# A waypoint is the centre of its scenario area. Run the scene check at
+		# the instant of arrival: the 0.5 s scene timer can miss the short window
+		# when a fast run crosses the area, and the escorted aircraft (C-130 in
+		# MISN-1A) would never be activated.
+		_update_scenes()
 		if nav_index < waypoints.size():
 			_say("Waypoint %s" % waypoints[nav_index].name, 4.0)
 			# Waypoint-to-waypoint fast travel (the original ran these legs with
 			# the autopilot at accelerated time when the airspace was clear).
-			if rig != null and not player.on_ground and not fast_travel:
+			if rig != null and not player.on_ground and not approach_jump and not rig.flyby_active():
 				rig.start_flyby(4.0)   # cinematic cutaway as the route turns over
 		_check_mission()
 
 
-## Fast travel to the active waypoint (a standard flight-sim "time warp").
-## The plane flies the route on autopilot while time accelerates smoothly to
-## TRAVEL_MAX_SCALE. It engages only in clear airspace and drops out at once
-## when a threat appears, on damage, on arrival at the waypoint, or when the
-## player toggles it off (F7). Progress is shown as a FAST FORWARD HUD line.
-func _toggle_fast_travel() -> void:
-	if fast_travel:
-		_stop_fast_travel("Fast travel off - you have control.")
+## F7: reposition onto the approach to the active waypoint. The old fast
+## travel dropped the plane ON the waypoint, which skipped the scenario area:
+## the escorted aircraft continued on its own leg, the autopilot turned toward
+## the wrong waypoint and the bandits only spawned back at the airfield. The
+## replacement places the player and its friendly aircraft 10 km short, with
+## the waypoint and its triggers still ahead. Pressing F7 during the short
+## flyby is ignored, so one press = one approach.
+func _trigger_waypoint_approach() -> void:
+	if approach_jump:
 		return
 	if not player.alive or player.on_ground:
-		_say("Fast travel: airborne only.", 2.0)
+		_say("Waypoint approach: airborne only.", 2.0)
 		return
 	if waypoints.is_empty() or nav_index >= waypoints.size():
-		_say("Fast travel: no active waypoint.", 2.0)
+		_say("Waypoint approach: no active waypoint.", 2.0)
 		return
 	var nearest := _nearest_active_enemy()
 	if nearest < TRAVEL_SAFE_M:
-		_say("Cannot fast travel - enemies within %d km." % int(nearest / 1000.0), 2.5)
+		_say("Cannot reposition - enemies within %d km." % int(nearest / 1000.0), 2.5)
 		return
-	# Route-follow autopilot handles the flying; leave combat/landing modes.
-	autopilot = false
-	autopilot_land = false
-	autopilot_waypoint = false
-	fast_travel = true
-	_say("Fast travel to %s - F7 to cancel." % waypoints[nav_index].name, 3.0)
-	print("FASTTRAVEL engage wp=%d/%d dist=%.0f" % [nav_index + 1, waypoints.size(),
-		Vector2(waypoints[nav_index].pos.x - player.global_position.x,
-			waypoints[nav_index].pos.z - player.global_position.z).length()])
+	var target_name: String = waypoints[nav_index].name
+	_approach_done_nav = nav_index
+	_spawn_at_waypoint_approach()
+	approach_jump = true
+	_ft_flyby_left = JUMP_ANIM_S
 	if rig != null:
-		rig.start_flyby(5.0)
+		rig.start_jump(JUMP_ANIM_S)
+	_say("Approaching %s" % target_name, 2.5)
+	print("APPROACH reposition -> %s (%d/%d)" % [target_name, nav_index, waypoints.size()])
 
 
-## Called every physics frame. Smoothly ramps the time warp while travelling
-## and stops travel on threats, damage or arrival.
-func _update_fast_travel(dt: float) -> void:
-	if not fast_travel:
-		return
-	if not player.alive or player.on_ground:
-		_stop_fast_travel("Fast travel off.")
-		return
-	# Arrival: hand control back at the active waypoint and advance the route.
-	# The warp stops AT the waypoint (using its radius, ~1 km default), not 6 km
-	# before it like _update_nav()'s safety-net reach does.
-	if nav_index >= waypoints.size():
-		_stop_fast_travel("Route complete.")
-		return
-	var reach := float(waypoints[nav_index].get("radius", 1000.0))
-	if reach <= 0.0:
-		reach = 1000.0
-	var wp: Vector3 = waypoints[nav_index].pos
-	var d2wp: float = Vector2(wp.x - player.global_position.x, wp.z - player.global_position.z).length()
-	if d2wp <= reach:
-		var reached: String = waypoints[nav_index].name
-		nav_index += 1
-		_check_mission()
-		if nav_index < waypoints.size():
-			_stop_fast_travel("Waypoint %s reached. Next: %s." % [reached, waypoints[nav_index].name])
+## Places the player 10 km before the active waypoint along the incoming leg,
+## pointing at it. The friendly aircraft with the player are placed in the
+## same formation, and friendly aircraft still waiting on the runway or for a
+## scene are spawned beside them. Nav_index is NOT advanced: the last leg is
+## flown normally so the area's script activates in the original order.
+func _spawn_at_waypoint_approach() -> void:
+	var wp: Dictionary = waypoints[nav_index]
+	var pos: Vector3
+	var heading: float
+	var speed: float = maxf(player.speed(), 200.0)
+	var final_stop: bool = nav_index == waypoints.size() - 1
+	if final_stop and home_runway != null and home_runway.mesh_instance != null and home_runway.mesh_instance.mesh != null:
+		# Head Home: keep the stable 8 km final, otherwise the landing autopilot
+		# circles in a permanent go-around (same pose as --approach).
+		var box: AABB = home_runway.mesh_instance.mesh.get_aabb()
+		var xf: Transform3D = home_runway.mesh_instance.global_transform
+		var center: Vector3 = xf * box.get_center()
+		var along_x := box.size.x > box.size.z
+		var axis: Vector3 = (xf.basis * (Vector3.RIGHT if along_x else Vector3.BACK)).normalized()
+		axis.y = 0.0
+		axis = axis.normalized()
+		var half := maxf(box.size.x, box.size.z) * 0.5
+		var side: Vector3 = axis.cross(Vector3.UP).normalized()
+		axis *= _landing_end_sign(center, axis, half)
+		var threshold: Vector3 = center + axis * half
+		pos = center + axis * (half + 8000.0) - side * 60.0
+		pos.y = threshold.y + tan(deg_to_rad(GLIDE_SLOPE)) * 8000.0 + 120.0
+		heading = atan2(axis.x, axis.z)
+		speed = 150.0
+	else:
+		# Incoming leg: previous waypoint -> active waypoint (or the player's
+		# current position for the first leg). Stop 10 km short of the target.
+		var from_pos: Vector3 = waypoints[nav_index - 1].pos if nav_index > 0 else player.global_position
+		var dir: Vector3 = wp.pos - from_pos
+		dir.y = 0.0
+		if dir.length() > 1.0:
+			dir = dir.normalized()
 		else:
-			_stop_fast_travel("Route complete - %s." % reached)
-		return
-	# A threat or damage cancels the warp immediately (as in most flight sims).
-	var nearest := _nearest_active_enemy()
-	if nearest < TRAVEL_SAFE_M:
-		_stop_fast_travel("Contact! Fast travel off.")
-		return
-	if player.health < 95.0:
-		_stop_fast_travel("Damage - fast travel off.")
-		return
-	# Ramp the time warp up smoothly (never touch the base scale in test runs
-	# that already run accelerated, e.g. --fast).
-	if _travel_base <= 1.05:
-		_travel_scale = move_toward(_travel_scale, TRAVEL_MAX_SCALE, dt * 6.0)
-		Engine.time_scale = _travel_scale
+			dir = -player.global_transform.basis.z
+			dir.y = 0.0
+			dir = dir.normalized()
+		pos = wp.pos - dir * APPROACH_OFFSET_M
+		pos.y = maxf(pos.y, _ground(pos) + 1500.0)
+		heading = atan2(-dir.x, -dir.z)
+	# Transform/velocity only: respawn() would also heal and re-arm the player.
+	player.global_transform = Transform3D(Basis(Vector3.UP, heading), pos)
+	player.velocity = -player.global_transform.basis.z * speed
+	player.on_ground = false
+	_place_friendlies_at_approach()
 
 
-func _stop_fast_travel(msg: String) -> void:
-	fast_travel = false
-	_travel_scale = 1.0
-	if _travel_base <= 1.05:
-		Engine.time_scale = 1.0
-	if rig != null and not player.on_ground:
-		rig.start_flyby(3.0)
+## Keeps every friendly aircraft with the player after a reposition. Aircraft
+## that were still waiting for their scene (a scripted wingman on the runway,
+## for example) are spawned beside the player instead of being left behind.
+func _place_friendlies_at_approach() -> void:
+	var t: Transform3D = player.global_transform
+	var spawn_side: Vector3 = t.basis * Vector3.RIGHT
+	for a in allies:
+		if a == player or a == null or not is_instance_valid(a) or not a.alive:
+			continue
+		var offset: Vector3 = a.formation_offset if a.get("formation_offset") != null else Vector3.ZERO
+		a.global_transform = Transform3D(t.basis, t.origin + t.basis * offset)
+		a.velocity = player.velocity
+		a.on_ground = false
+		a.takeoff = false
+		a.standby = false
+	if mission == null:
+		return
+	var start = mission.player_part()
+	for pi in _scene_wait.keys():
+		if pi >= mission.parts.size():
+			continue
+		var part: Dictionary = mission.parts[pi]
+		var friendly: bool = part.side == start.side or _escort_ids.has(part.id)
+		if not friendly or not _is_aircraft("OBJECTS/%s.IFF" % part.model):
+			continue
+		var k: int = _scene_wait.size()
+		var spot: Vector3 = t.origin + spawn_side * (120.0 + 80.0 * (k % 3)) \
+			- t.basis.z * (250.0 + 120.0 * (k % 2))
+		spot.y = maxf(spot.y, _ground(spot) + 1500.0)
+		if _spawn_part(pi, spot) != null:
+			_scene_wait.erase(pi)
+	_link_formations()
+
+
+## Counts down the flyby after a reposition. No flight model runs in this
+## state; the camera cut is the only thing the player sees during it.
+func _update_approach_jump(dt: float) -> void:
+	if not approach_jump:
+		return
+	_ft_flyby_left -= dt
+	if _ft_flyby_left <= 0.0:
+		approach_jump = false
+		_ft_flyby_left = 0.0
+
+
+func _stop_approach_jump(msg: String) -> void:
+	approach_jump = false
+	_ft_flyby_left = 0.0
 	_say(msg, 2.5)
-	print("FASTTRAVEL stop: %s (scale=%.1f)" % [msg, Engine.time_scale])
+	print("APPROACH stop: %s" % msg)
 
 
 ## Nearest live, non-standby (i.e. actively engaging) enemy distance, or a huge
@@ -1274,6 +1370,9 @@ func _rearm_player() -> void:
 	var m = SCData.model(player.model_name)
 	if m != null:
 		player.missiles = Weapons.loadout(m)
+		if Settings.is_arcade():
+			for k in player.missiles:
+				player.missiles[k] += 2
 		_loadout = player.missiles.duplicate()
 
 
@@ -1570,7 +1669,7 @@ func _physics_process(dt: float) -> void:
 		_update_joinup(dt)
 	_update_cockpit_audio(dt)
 	_player_input(dt)
-	_update_fast_travel(dt)
+	_update_approach_jump(dt)
 	if mission != null and not mission_over and player.alive:
 		var agl: float = player.global_position.y - (terrain.height_at(player.global_position.x, player.global_position.z) if terrain else 0.0)
 		if not player.on_ground and agl > 100.0:
@@ -1582,8 +1681,9 @@ func _physics_process(dt: float) -> void:
 		if _scene_timer <= 0.0:
 			_scene_timer = 0.5
 			_update_scenes()
-			_update_nav()
 			_script_tick()
+		# Update navigation every physics frame for accurate waypoint tracking
+		_update_nav()
 		# Radio traffic: the cockpit is never silent - wingmen call their
 		# moves, the tower nags about the approach, New Job timing etc.
 		_chat_timer -= dt
@@ -1668,7 +1768,7 @@ func _player_input(dt: float) -> void:
 	if not _land_anim.is_empty():
 		return    # the auto-landing flies the aircraft
 
-	# Autopilot toggles (F5 = waypoint, F6 = land, F7 = navpoint jump). F1-F4
+	# Autopilot toggles (F5 = waypoint, F6 = land, F7 = waypoint approach). F1-F4
 	# are left free for the original discrete camera views.
 	if Input.is_action_just_pressed("autopilot_waypoint"):
 		autopilot_waypoint = not autopilot_waypoint
@@ -1689,14 +1789,19 @@ func _player_input(dt: float) -> void:
 				if rig != null:
 					rig.start_flyby(4.0)
 	if Input.is_action_just_pressed("next_waypoint"):
-		_toggle_fast_travel()
-	# Headless test: --fasttravel engages once the plane is clearly airborne.
-	if not fast_travel and not _ft_auto \
-			and (OS.get_cmdline_args().has("--fasttravel") or OS.get_cmdline_user_args().has("--fasttravel")) \
-			and not player.on_ground and player.speed() > 60.0 \
-			and player.global_position.y - (terrain.height_at(player.global_position.x, player.global_position.z) if terrain else 0.0) > 120.0:
-		_ft_auto = true
-		_toggle_fast_travel()
+		_trigger_waypoint_approach()
+	# Test flag (--fasttravel kept as a compatibility alias): reposition 10 km
+	# before each waypoint in turn, so the whole route and its scenes are flown.
+	var auto_approach: bool = OS.get_cmdline_args().has("--fasttravel") \
+		or OS.get_cmdline_user_args().has("--fasttravel") \
+		or OS.get_cmdline_args().has("--approachjump") \
+		or OS.get_cmdline_user_args().has("--approachjump")
+	if auto_approach:
+		if not approach_jump and not player.on_ground and player.alive \
+				and nav_index != _approach_done_nav \
+				and nav_index < waypoints.size() and player.speed() > 60.0 \
+				and player.global_position.y - (terrain.height_at(player.global_position.x, player.global_position.z) if terrain else 0.0) > 120.0:
+			_trigger_waypoint_approach()
 
 	# F8: hand the aircraft to the AI pilot (it flies, dogfights, shoots guns and
 	# launches missiles, then hands over to the landing autopilot). Toggling it
@@ -1727,10 +1832,9 @@ func _player_input(dt: float) -> void:
 		_autopilot_waypoint()
 		return
 
-	# Fast travel: the same route-follow autopilot, with the time warp applied
-	# by _update_fast_travel(). Control returns automatically on arrival.
-	if fast_travel:
-		_autopilot_waypoint()
+	# Reposition: during the flyby only the camera moves, so no steering is
+	# applied here.
+	if approach_jump:
 		return
 
 	# Landing autopilot: approach and land at home runway
@@ -1813,6 +1917,12 @@ func _autopilot() -> void:
 	if waypoints.size() > 0 and nav_index >= waypoints.size() - 1 and (remaining == 0 or _script_success):
 		autopilot = false
 		autopilot_land = true
+		# The original's last leg can end well off the runway axis (MISN-1A
+		# comes home from Nouakchott, west of the field). Put the aircraft on a
+		# clean 8 km final first, like the F6 fast-forward, instead of letting
+		# the landing autopilot circle for ever outside the glideslope cone.
+		if home_runway != null and not player.on_ground:
+			_setup_approach()
 		_say("Combat done - autopilot: landing.", 4.0)
 		_autopilot_land()
 		return
@@ -2520,10 +2630,13 @@ func _launch_missile(shooter: Node3D, name: String, target: Node3D) -> void:
 	m.setup(name, _missile_mesh(name), from, dir, vel, spec(name))
 	m.target = target
 	m.shooter = shooter
+	m.arcade = shooter == player and Settings.is_arcade()
 	m.detonated.connect(_on_missile_detonated)
 	add_child(m)
 	missiles_in_flight.append(m)
 	target.incoming.append(m)
+	if shooter == player and cockpit_windows != null:
+		cockpit_windows.show_missile(m, target, Weapons.label(name))
 	if target == player:
 		_say("MISSILE WARNING - %s! Countermeasures: F" % Weapons.missile(name).label, 3.0)
 		radio_call(_wingman_actor(), 17, 15.0, true)          # watch it, missile on you
@@ -2601,14 +2714,16 @@ func _update_lock() -> void:
 	ground_lock = null
 	if not player.alive:
 		return
+	var arcade := Settings.is_arcade()
+	var range_mul := 1.5 if arcade else 1.0
 	if weapon_mode == "agm":
 		var nose: Vector3 = -player.global_transform.basis.z
-		var best_g := 0.35
+		var best_g := 0.35 if not arcade else 0.5
 		for o in ground_objects:
 			if not o.alive or not o.hittable or not (o.hostile or o.is_target):
 				continue
 			var to: Vector3 = o.center() - player.global_position
-			if to.length() > Weapons.MISSILES["AGM-65D"].range:
+			if to.length() > Weapons.MISSILES["AGM-65D"].range * range_mul:
 				continue
 			var ang := nose.angle_to(to.normalized())
 			if ang < best_g and _line_of_sight(player.global_position, o.center() + Vector3.UP * 4.0):
@@ -2616,12 +2731,12 @@ func _update_lock() -> void:
 				ground_lock = o
 		return
 	var fwd: Vector3 = -player.global_transform.basis.z
-	var best := LOCK_CONE
+	var best := 0.75 if arcade else LOCK_CONE
 	for e in enemies:
 		if not e.alive:
 			continue
 		var to: Vector3 = e.global_position - player.global_position
-		if to.length() > Weapons.MISSILES.AMRAAM.range:
+		if to.length() > Weapons.MISSILES.AMRAAM.range * range_mul:
 			continue
 		var ang := fwd.angle_to(to.normalized())
 		if ang < best:
@@ -2678,6 +2793,8 @@ func _player_bomb() -> void:
 			b.impacted.connect(func(bomb, pos): _blast(pos, bomb.spec.damage, bomb.spec.blast, null, bomb.shooter))
 			add_child(b)
 			bombs_in_flight.append(b)
+			if cockpit_windows != null:
+				cockpit_windows.show_bomb(b, Weapons.label(name))
 			return
 	_say("No bombs left.", 2.0)
 
@@ -2700,9 +2817,10 @@ func _player_missile() -> void:
 		_say("No lock - turn towards an enemy.", 2.0)
 		return
 	var dist: float = player_lock.global_position.distance_to(player.global_position)
-	var order := ["SWINDERM", "AMRAAM"] if dist < Weapons.MISSILES.SWINDERM.range else ["AMRAAM"]
+	var arcade := Settings.is_arcade()
+	var order := ["SWINDERM", "AMRAAM"] if dist < Weapons.MISSILES.SWINDERM.range * (1.5 if arcade else 1.0) else ["AMRAAM"]
 	for name in order:
-		if player.missiles.get(name, 0) > 0 and dist < Weapons.missile(name).range:
+		if player.missiles.get(name, 0) > 0 and dist < Weapons.missile(name).range * (1.5 if arcade else 1.0):
 			player.missiles[name] -= 1
 			_launch_missile(player, name, player_lock)
 			_say("%s launched at %s" % [Weapons.missile(name).label, player_lock.display_name], 2.0)
@@ -2868,28 +2986,117 @@ func _setup_approach() -> void:
 	autopilot_land = true   # --approach: the landing autopilot takes over at once
 
 
-## Virtual cockpit: the original CD-ROM edition had a 3D cockpit model
-## (OBJECTS/<plane>-CKPT.IFF reads through the same RealSpace loader).
-## Attach it to the player; the camera rig shows it in cockpit view.
+## Virtual cockpit from the original data. The CD-ROM edition ships real 3D
+## cockpit models in OBJECTS/F16-CKPT.IFF and OBJECTS/F22-CKPT.IFF; Tactical
+## Operations adds OBJECTS/F22BCKPT.IFF. Their file names do not follow the
+## aircraft model names (F-16DES -> F16-CKPT, F-22B -> F22BCKPT), so the
+## mapping below is explicit, with a normalized-name fallback.
+const COCKPIT_MODELS := {
+	"F-16DES": "OBJECTS/F16-CKPT.IFF",
+	"F-16GRAY": "OBJECTS/F16-CKPT.IFF",
+	"F-16": "OBJECTS/F16-CKPT.IFF",
+	"F16": "OBJECTS/F16-CKPT.IFF",
+	"F-22": "OBJECTS/F22-CKPT.IFF",
+	"F22": "OBJECTS/F22-CKPT.IFF",
+	"F-22B": "OBJECTS/F22BCKPT.IFF",
+	"F22B": "OBJECTS/F22BCKPT.IFF",
+}
+
+
+## Attaches the original cockpit model to the player and hands it to the
+## camera rig, which shows it in cockpit view. Aircraft with no original
+## cockpit keep the plain HUD view; that is reported, never silently skipped.
 func _setup_cockpit_model() -> void:
-	var base: String = player.display_name.to_upper()
-	for suffix in ["DES", "GRAY", "GRA", "DEF", "EARLY"]:
-		if base.ends_with(suffix):
-			base = base.substr(0, base.length() - suffix.length())
-	for name in ["OBJECTS/%s-CKPT.IFF" % base, "OBJECTS/%sCKPT.IFF" % base]:
-		if not SCData.has(name):
-			continue
-		var m = SCData.model(name)
-		if m == null:
-			continue
-		var ckpt := MeshInstance3D.new()
-		ckpt.mesh = m.build_mesh(_pal, 0, _smooth)
-		ckpt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		player.add_child(ckpt)   # aligned with the aircraft body
-		ckpt.visible = false
-		cockpit_model = ckpt
-		print("cockpit model attached: ", name)
+	if player == null or rig == null:
 		return
+	if cockpit_model != null and is_instance_valid(cockpit_model):
+		cockpit_model.queue_free()
+	cockpit_model = null
+	rig.cockpit_model = null
+	rig.pilot_node = null
+	# Pilot silhouette exists for every aircraft: textured pit on aircraft with
+	# an original 3D pit, procedural legs elsewhere.
+	_build_pilot_legs()
+	rig.pilot_node = _pilot_node
+	var key: String = player.display_name.to_upper()
+	var path: String = COCKPIT_MODELS.get(key, "")
+	if path == "":
+		var norm := key.replace("-", "").replace("_", "")
+		for suffix in ["DES", "GRAY", "GRA", "DEF", "EARLY"]:
+			if norm.ends_with(suffix):
+				norm = norm.substr(0, norm.length() - suffix.length())
+		for candidate in ["OBJECTS/%s-CKPT.IFF" % norm, "OBJECTS/%sCKPT.IFF" % norm]:
+			if SCData.has(candidate):
+				path = candidate
+				break
+	if path == "" or not SCData.has(path):
+		print("cockpit: no original model for ", key)
+		return
+	# FORM:CKPT is NOT a RealSpace model: it holds instruments, HUD and a
+	# FORM:REAL / OBJS entry naming the 3D pit mesh (F16PITXP, F22PIT, ...).
+	var buf: PackedByteArray = SCData.read(path)
+	var nodes = Iff.parse(buf)
+	var root = Iff.find(nodes, ["FORM:CKPT"])
+	var real = Iff.find(root.children if root != null else [], ["FORM:REAL"])
+	var objs = Iff.find(real.children if real != null else [], ["OBJS"])
+	var pit_name: String = Iff.cstr(buf, objs.off, objs.size) if objs != null else ""
+	pit_name = pit_name.replace(" ", "").strip_edges().to_upper()
+	if pit_name == "":
+		pit_name = "F16PITXP" if "F16" in key else "F22PIT"
+	var model_path: String = "OBJECTS/%s.IFF" % pit_name
+	var m = SCData.model(model_path)
+	if m == null:
+		push_warning("Cockpit model could not be parsed: " + model_path)
+		return
+	var ckpt := MeshInstance3D.new()
+	ckpt.mesh = m.build_mesh(_pal, 0, _smooth)
+	ckpt.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	player.add_child(ckpt)   # aligned with the aircraft body
+	ckpt.visible = false
+	cockpit_model = ckpt
+	rig.cockpit_model = ckpt
+	rig.pilot_node = _pilot_node
+	# Live instruments at the original FORM:CKPT quad positions, measured from
+	# the SAME seat the camera uses (aircraft model_instance AABB, not the pit
+	# mesh AABB — they differ by ~37 units on the F-16).
+	var seat := Vector3.ZERO
+	var mi = player.get("model_instance")
+	if mi != null and mi.mesh != null:
+		var bb: AABB = mi.mesh.get_aabb()
+		var local_seat := Vector3(bb.position.x + bb.size.x * 0.5,
+			bb.position.y + bb.size.y * 0.54,
+			bb.position.z + bb.size.z * 0.48)
+		seat = mi.transform * local_seat
+	var instruments = preload("res://scripts/game/cockpit_instruments.gd").new()
+	player.add_child(instruments)
+	instruments.setup(self, seat)
+	cockpit_instruments = instruments
+	rig.cockpit_instruments = instruments
+	var windows = preload("res://scripts/game/cockpit_windows.gd").new()
+	instruments.add_child(windows)
+	windows.setup(self, seat, player, Settings.is_arcade())
+	cockpit_windows = windows
+	print("cockpit model attached: ", model_path, " from ", path)
+
+
+## A small procedural pilot silhouette for aircraft without an original one,
+## standing at the bottom of the pit behind the seat: two legs as capsules, so
+## the textured pit reads with a person in it instead of flat geometry.
+func _build_pilot_legs() -> void:
+	if _pilot_node != null and is_instance_valid(_pilot_node):
+		_pilot_node.queue_free()
+	_pilot_node = Node3D.new()
+	_pilot_node.name = "pilot_silhouette"
+	player.add_child(_pilot_node)
+	for i in 2:
+		var leg := CapsuleMesh.new()
+		leg.height = 0.75
+		leg.radius = 0.2
+		var mi := MeshInstance3D.new()
+		mi.mesh = leg
+		var x: float = -0.3 if i == 0 else 0.3
+		mi.position = Vector3(x, -0.4, 0.0)
+		_pilot_node.add_child(mi)
 
 
 ## Flight results for the campaign, as the original STRIKE.EXE writes them to
@@ -2937,8 +3144,9 @@ func start_auto_land() -> void:
 	var start_d := final_d
 	var cut: bool = p.distance_to(f) > 12000.0 or along > -2500.0
 	if cut:
-		# Jump to a 9 km final on the extended centreline.
-		start_d = 9000.0
+		# Jump to a short 3.5 km final on the extended centreline: the landing
+		# is quick enough to watch from start to touchdown in the cinematic.
+		start_d = 3500.0
 		var c: Vector3 = t - dir * start_d
 		c.y = maxf(t.y + GLIDE_TCH + tan_gs * start_d, _ground(c) + 150.0)
 		curve.add_point(c)
@@ -2987,10 +3195,11 @@ func start_auto_land() -> void:
 	autopilot = false
 	autopilot_land = false
 	autopilot_waypoint = false
-	if fast_travel:
-		_stop_fast_travel("")
+	if approach_jump:
+		_stop_approach_jump("")
 	if cut and rig != null:
-		rig.start_flyby(3.0)
+		# Own landing shot: follow the jet first, end parked beside the runway.
+		rig.start_landing_anim(t, dir, _ground(t))
 	_say("AUTO-LANDING", 4.0)
 	print("AUTOLAND start: path %.0f m, touchdown at %.0f m, cut=%s" % [length, s_td, cut])
 
@@ -3067,6 +3276,8 @@ func _update_auto_land(dt: float) -> void:
 		player.on_ground = true
 		player.set_physics_process(true)
 		_land_anim = {}
+		if rig != null:
+			rig.stop_landing_anim()
 		print("AUTOLAND done")
 
 

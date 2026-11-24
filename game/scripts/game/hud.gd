@@ -12,6 +12,7 @@ var scene
 var _msg := ""
 var _msg_time := 0.0
 var _msg_len := 0.0
+var hide_text := false   # cockpit uses 3D gauges; screen-fixed text would slide
 
 
 func _ready() -> void:
@@ -49,11 +50,16 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	var fs := int(20 * u)
 	var b: Basis = p.global_transform.basis
+	var in_range := false
+	# The cockpit HUD framebuffer is the aircraft-attached HUD: draw its text.
+	# A plain screen-space overlay in cockpit view would slide with the head.
+	var in_framebuffer: bool = get_parent() != null and get_parent().name == "HUDFramebuffer"
+	hide_text = scene.rig.mode in [1, 2] and not scene.vr_active and not in_framebuffer
 
-	# Heading tape
+	# Heading tape — along the BOTTOM of the HUD (original manual p. 59).
 	var heading := fposmod(rad_to_deg(atan2(-b.z.x, b.z.z)), 360.0)
-	var tape_y := 60.0 * u
-	draw_line(Vector2(c.x - 220 * u, tape_y), Vector2(c.x + 220 * u, tape_y), GREEN, 2.0)
+	var tape_y := sz.y - 72.0 * u
+	draw_line(Vector2(c.x - 240 * u, tape_y), Vector2(c.x + 240 * u, tape_y), GREEN, 2.0)
 	for d in range(-30, 31, 5):
 		var hd := fposmod(roundf(heading / 5.0) * 5.0 + d, 360.0)
 		var off := (hd - heading)
@@ -64,18 +70,66 @@ func _draw() -> void:
 		var major := int(hd) % 10 == 0
 		draw_line(Vector2(x, tape_y), Vector2(x, tape_y - (14 if major else 7) * u), GREEN, 2.0)
 		if major:
-			_text(font, "%03d" % int(hd), Vector2(x, tape_y - 20 * u), fs * 0.8, GREEN)
-	draw_line(Vector2(c.x, tape_y + 4 * u), Vector2(c.x, tape_y + 16 * u), AMBER, 3.0)
+			_text(font, "%03d" % int(hd), Vector2(x, tape_y - 22 * u), fs * 0.8, GREEN)
+	# Stationary caret marks the current heading (the waypoint caret is drawn
+	# later, just above the tape).
+	draw_colored_polygon(PackedVector2Array([Vector2(c.x, tape_y + 10 * u),
+		Vector2(c.x - 8 * u, tape_y - 4 * u), Vector2(c.x + 8 * u, tape_y - 4 * u)]), AMBER)
 
-	# Speed and altitude boxes
+	# Airspeed (left) and altitude (right) vertical tapes, manual p. 57-59.
 	var kts: float = p.speed() * MS_TO_KTS
 	var alt_ft: float = p.global_position.y * M_TO_FT
 	var agl_ft: float = (p.global_position.y - (scene.terrain.height_at(p.global_position.x, p.global_position.z) if scene.terrain else 0.0)) * M_TO_FT
-	_box(font, Vector2(c.x - 380 * u, c.y), "%d" % kts, "KTS  M%.2f" % (p.speed() / 340.0), u)
-	_box(font, Vector2(c.x + 380 * u, c.y), "%d" % alt_ft, "FT  R%d" % agl_ft, u)
+	var half_tape := 250.0 * u
+	var tape_top := c.y - half_tape
+	var tape_bot := c.y + half_tape
+	var spd_x := c.x - 360.0 * u
+	var alt_x := c.x + 360.0 * u
+	var kts_per_px := 150.0 / half_tape
+	var ft_per_px := 1500.0 / half_tape
+
+	# Airspeed: ticks every 10 kt, labels every 50 kt (tens, e.g. "35" = 350).
+	draw_line(Vector2(spd_x, tape_top), Vector2(spd_x, tape_bot), GREEN, 2.0)
+	var first_kt := int(floorf((kts - 150.0) / 10.0)) * 10
+	for kt in range(first_kt, int(kts + 150.0), 10):
+		if kt < 0: continue
+		var y := c.y + (kts - float(kt)) / kts_per_px
+		if y < tape_top or y > tape_bot: continue
+		var major := kt % 50 == 0
+		draw_line(Vector2(spd_x - (14 if major else 7) * u, y), Vector2(spd_x, y), GREEN, 2.0)
+		if major:
+			_right(font, "%02d" % (kt / 10), Vector2(spd_x - 12 * u, y + 6 * u), fs * 0.7, GREEN)
+	draw_line(Vector2(spd_x - 30 * u, c.y), Vector2(spd_x + 8 * u, c.y), AMBER, 3.0)
+	_text(font, "T", Vector2(spd_x - 22 * u, c.y - 18 * u), fs * 0.7, AMBER)
+	_text(font, "M%.2f" % (p.speed() / 340.0), Vector2(spd_x, tape_bot + 32 * u), fs * 0.9, GREEN)
+	_text(font, "THR %d%%" % int(p.throttle * 100), Vector2(spd_x, tape_bot + 56 * u), fs * 0.7, GREEN)
+
+	# Altitude: ticks every 100 ft, labels every 500 ft ("55" = 5,500 ft).
+	draw_line(Vector2(alt_x, tape_top), Vector2(alt_x, tape_bot), GREEN, 2.0)
+	var first_ft := int(floorf((alt_ft - 1500.0) / 100.0)) * 100
+	for ft in range(first_ft, int(alt_ft + 1500.0), 100):
+		var y := c.y + (alt_ft - float(ft)) / ft_per_px
+		if y < tape_top or y > tape_bot: continue
+		var major := ft % 500 == 0
+		draw_line(Vector2(alt_x, y), Vector2(alt_x + (14 if major else 7) * u, y), GREEN, 2.0)
+		if major and not hide_text:
+			draw_string(font, Vector2(alt_x + 16 * u, y + 6 * u), "%02d" % (ft / 100),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs * 0.7), GREEN)
+	# Long dash = altitude above sea level; caret (>) = altitude above terrain.
+	draw_line(Vector2(alt_x - 8 * u, c.y), Vector2(alt_x + 30 * u, c.y), AMBER, 3.0)
+	var ground_ft := alt_ft - agl_ft
+	var caret_y := clampf(c.y + (alt_ft - ground_ft) / ft_per_px, tape_top, tape_bot)
+	draw_colored_polygon(PackedVector2Array([Vector2(alt_x - 8 * u, caret_y),
+		Vector2(alt_x - 22 * u, caret_y - 8 * u), Vector2(alt_x - 22 * u, caret_y + 8 * u)]), GREEN)
+	# Distance to waypoint, nautical miles, just below the altitude tape.
+	var d_nm := 0.0
+	if scene.mission != null and scene.nav_index < scene.waypoints.size():
+		var wpos: Vector3 = scene.waypoints[scene.nav_index].pos
+		d_nm = Vector2(wpos.x - p.global_position.x, wpos.z - p.global_position.z).length() / 1852.0
+	_text(font, "D %.1f" % d_nm, Vector2(alt_x, tape_bot + 32 * u), fs * 0.9, GREEN)
 
 	# Flight path marker and pitch ladder (cockpit only, where it is conformal)
-	if scene.rig.mode == 1:
+	if scene.rig.mode == 1 or scene.rig.mode == 2:
 		_ladder(cam, p, u, font)
 	var fpm_world: Vector3 = p.global_position + p.velocity.normalized() * 500.0
 	if p.speed() > 10.0 and not cam.is_position_behind(fpm_world):
@@ -141,17 +195,17 @@ func _draw() -> void:
 			var s := cam.unproject_position(lp)
 			draw_arc(s, 34 * u, 0, TAU, 32, GREEN, 3.0)
 			_text(font, "LOCK", s - Vector2(0, 42 * u), fs * 0.8, GREEN)
-		# Original HUD readouts: IN RNG (weapon in effective range),
-		# "R n.m" (range to target) and "C knots" (closure rate).
+		# Original HUD readouts (manual p. 64): range and closure on the RIGHT
+		# side under the waypoint distance; IN RNG in the LOWER LEFT corner.
 		var rng: float = scene.aa_weapon_range(ldist)
 		if ldist <= rng or ldist < 1850.0:
-			_text(font, "IN RNG", c + Vector2(0, 38 * u), fs * 0.9, AMBER)
+			in_range = true
 		var closing := 0.0
 		if ldist > 1.0:
 			var dir: Vector3 = (lp - p.global_position) / ldist
 			closing = -(p.velocity - scene.player_lock.velocity).dot(dir) * 1.94384
-		_text(font, "R %.1f" % (ldist / 1852.0), c + Vector2(0, 60 * u), fs * 0.9, GREEN)
-		_text(font, "C %.0f" % closing, c + Vector2(0, 76 * u), fs * 0.9, GREEN)
+		_text(font, "R %.1f" % (ldist / 1852.0), Vector2(alt_x, tape_bot + 56 * u), fs * 0.9, GREEN)
+		_text(font, "C %.0f" % closing, Vector2(alt_x, tape_bot + 80 * u), fs * 0.9, GREEN)
 
 	# AGM ground lock
 	if scene.ground_lock != null and scene.ground_lock.alive:
@@ -225,8 +279,8 @@ func _draw() -> void:
 		if off > 180: off -= 360
 		if off < -180: off += 360
 		var cx := c.x + clampf(off, -30.0, 30.0) * 7.0 * u
-		draw_colored_polygon(PackedVector2Array([Vector2(cx, tape_y + 6 * u), Vector2(cx - 7 * u, tape_y + 18 * u),
-			Vector2(cx + 7 * u, tape_y + 18 * u)]), nav_col)
+		draw_colored_polygon(PackedVector2Array([Vector2(cx, tape_y - 4 * u), Vector2(cx - 7 * u, tape_y - 18 * u),
+			Vector2(cx + 7 * u, tape_y - 18 * u)]), nav_col)
 
 	# Landing aid: runway outline, glide slope and localizer deviation
 	var land: Dictionary = scene.landing_info()
@@ -258,37 +312,40 @@ func _draw() -> void:
 		_text(font, "ILS RWY %s   %.1f km   GS %+d m   SPD 150 KT" % [land.runway, land.distance / 1000.0, int(land.gs_error)],
 			Vector2(c.x, lx + 34 * u), fs * 0.85, GREEN)
 
-	# Status block
-	var Weapons = preload("res://scripts/game/weapons.gd")
-	var arms := []
-	for name in p.missiles:
-		if Weapons.mode_of(name) == scene.weapon_mode:
-			arms.append("%s %d" % [Weapons.label(name), p.missiles[name]])
-	var lines := [
-		"HULL %3d%%" % int(maxf(p.health, 0.0)),
-		"WPN %s: %s  CM %d" % [Weapons.MODE_LABELS[scene.weapon_mode], "  ".join(arms) if arms.size() else "empty", p.countermeasures],
-		"THR %3d%%%s" % [int(p.throttle * 100), "  AB" if p.afterburner else ""],
-		"G %4.1f   AOA %4.1f°" % [p.g_force, rad_to_deg(p.aoa)],
-		"CAMERA: %s" % scene.rig.mode_name(),
-		"KILLS: %d" % scene.kills,
-	]
-	if scene.mission != null and scene.nav_index < scene.waypoints.size():
-		var w: Dictionary = scene.waypoints[scene.nav_index]
-		lines.append("NAV %d/%d: %s %.1f km" % [scene.nav_index + 1, scene.waypoints.size(), w.name,
-			Vector2(w.pos.x - p.global_position.x, w.pos.z - p.global_position.z).length() / 1000.0])
-	if scene.fast_travel:
-		lines.append("FAST FORWARD x%.0f  (F7 to cancel)  ~%.1f km" % [
-			Engine.time_scale,
-			(Vector2(scene.waypoints[scene.nav_index].pos.x - p.global_position.x,
-				scene.waypoints[scene.nav_index].pos.z - p.global_position.z).length() / 1000.0)
-			if scene.nav_index < scene.waypoints.size() else 0.0])
-	if scene.mission != null:
-		lines.append("MISSION: %s" % ("COMPLETE" if scene.mission_complete else "targets %d/%d" % [scene.targets_left(), scene.targets.size()]))
-	if p.brakes: lines.append("BRAKES")
-	if p.on_ground: lines.append("ON GROUND")
-	for i in lines.size():
-		draw_string(font, Vector2(40 * u, sz.y - (40 + (lines.size() - 1 - i) * 28) * u), lines[i],
+	# Corner readouts. In cockpit view these are drawn as 3D gauges instead:
+	# a screen-space label would slide against the pit when the head turns.
+	if not hide_text:
+		var Weapons = preload("res://scripts/game/weapons.gd")
+		# G force: current above maximum, UPPER LEFT (manual p. 59).
+		draw_string(font, Vector2(40 * u, 54 * u), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs * 0.7), GREEN)
+		draw_string(font, Vector2(70 * u, 54 * u), "%.1f" % p.g_force, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, GREEN)
+		draw_string(font, Vector2(70 * u, 82 * u), "9.0", HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs * 0.7), Color(GREEN, 0.7))
+		# GEAR / FLAPS / BRAKE: UPPER RIGHT (manual p. 60).
+		var upper_right := []
+		if p.get("gear_down") == true: upper_right.append("GEAR")
+		if p.get("flaps_down") == true: upper_right.append("FLAPS")
+		if p.brakes: upper_right.append("BRAKE")
+		for i in upper_right.size():
+			_right(font, upper_right[i], Vector2(sz.x - 40 * u, (54 + i * 28) * u), fs * 0.8, AMBER)
+
+		# Weapons remaining + selected weapon + IN RNG: LOWER LEFT (manual p. 64).
+		var arms := []
+		for name in p.missiles:
+			if Weapons.mode_of(name) == scene.weapon_mode:
+				arms.append("%s %d" % [Weapons.label(name), p.missiles[name]])
+		draw_string(font, Vector2(40 * u, sz.y - 112 * u), " ".join(arms) if arms.size() else "EMPTY",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, GREEN)
+		draw_string(font, Vector2(40 * u, sz.y - 84 * u), Weapons.MODE_LABELS[scene.weapon_mode],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, fs, GREEN)
+		if in_range:
+			draw_string(font, Vector2(40 * u, sz.y - 56 * u), "IN RNG", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, AMBER)
+
+	# Centre warnings (manual p. 59-60).
+	var fuel = p.get("fuel")
+	if fuel != null and float(fuel) < 0.15:
+		_text(font, "FUEL", c, fs * 1.4, AMBER)
+	if rad_to_deg(p.aoa) > 18.0:
+		_text(font, "STALL", c + Vector2(0, 50 * u), fs * 1.4, AMBER)
 	if p.alive and agl_ft < 500 and p.velocity.y < -15 and not p.on_ground:
 		_text(font, "PULL UP", c + Vector2(0, 140 * u), fs * 1.8, Color(1, 0.3, 0.2))
 	# Radar MFD (the original air-to-air radar, manual p. 62-64: forward
@@ -332,8 +389,18 @@ func _box(font: Font, pos: Vector2, value: String, label: String, u: float) -> v
 
 
 func _text(font: Font, s: String, at: Vector2, fs: float, col: Color) -> void:
+	if hide_text:
+		return
 	var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs)).x
 	draw_string(font, at - Vector2(w * 0.5, 0), s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs), col)
+
+
+## Right-aligned label (upper-right corner indicators, left tape tick numbers).
+func _right(font: Font, s: String, at: Vector2, fs: float, col: Color) -> void:
+	if hide_text:
+		return
+	var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs)).x
+	draw_string(font, at - Vector2(w, 0), s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(fs), col)
 
 
 ## Air-to-air / RAW radar MFD, centre-bottom like the original cockpit MFD:

@@ -20,6 +20,7 @@ static var save_path := "user://demo_campaign.json" if Demo.enabled() else "user
 signal screen_changed(screen_id: int)
 signal message(text: String)
 
+var tactical := false           # true = Tactical Operations (GAMEFLO2.IFF)
 var stage := 0                  # index into gameflow.stages
 var screen := -1                # current base screen id
 var flags := {}                 # flag id -> bool
@@ -59,13 +60,30 @@ func gameflow():
 	return Art.gameflow()
 
 
-## Campaign mission files in campaign order (MISN-1A, 1B, 1C, 2A, ...); the
-## X / AA / BB variants are alternates and not part of the main sequence.
+## Campaign mission files in the order the original game numbers them.
+## FORM MLST is the authoritative table: GAMEFLOW's effect `0c n` / `03 n`
+## indexes it DIRECTLY, including the alternate missions (5BB, 9AA, 6X, ...)
+## and the empty slots of the add-on list. Removing or skipping any entry
+## shifts every later mission number, so the list is returned verbatim.
 static func mission_files() -> Array:
 	var out := []
+	var mlst: Array = Art.gameflow().mission_list
+	for name in mlst:
+		# Keep missing files as empty placeholders: an index must stay bound to
+		# its MLST name even when the mission is not shipped in this install.
+		var f: String = "MISSIONS/" + String(name) + ".IFF"
+		out.append(f if SCData.has(f) else "")
+	if not out.is_empty():
+		return out
+	# Fallback for installs whose GAMEFLOW.IFF has no MLST: discover mission
+	# files by tag. Base tags start with a digit, tactical ones with a letter.
+	var want_tactical: bool = Art.active_set == "tactical"
 	for f in SCData.list("MISSIONS/MISN-", ".IFF"):
 		var tag: String = f.get_file().get_basename().substr(5)
-		if tag.ends_with("X") or tag.ends_with("AA") or tag.ends_with("BB"):
+		if tag.is_empty():
+			continue
+		var letter: bool = tag[0] < "0" or tag[0] > "9"
+		if letter != want_tactical:
 			continue
 		out.append(f)
 	out.sort_custom(func(a, b): return _key(a) < _key(b))
@@ -110,15 +128,23 @@ func substitute(text: String) -> String:
 
 # --- stages ----------------------------------------------------------------
 
-func start_new() -> void:
-	print("CAMPAIGN: start_new()")
+func start_new(is_tactical := false) -> void:
+	print("CAMPAIGN: start_new() tactical=", is_tactical)
+	tactical = is_tactical
+	Art.set_active("tactical" if is_tactical else "base")
 	stage = 0
 	flags.clear()
 	screen = -1
+	results.clear()
 	_reset_economy()
-	print("CAMPAIGN: playing MID1")
-	await host.play_story(1)          # MID1: the opening cut-scene
-	print("CAMPAIGN: MID1 done, entering stage 0")
+	if not is_tactical:
+		print("CAMPAIGN: playing MID1")
+		await host.play_story(1)      # MID1: the base campaign's opening cut-scene
+		print("CAMPAIGN: MID1 done, entering stage 0")
+	else:
+		# Tactical Operations does not open with the base game's MID1: stage 0
+		# runs its own effect 02 (story cut-scene) and 08 (establishing shot).
+		print("CAMPAIGN: tactical stage 0 (no base MID1)")
 	await enter_stage(0)
 
 
@@ -507,7 +533,8 @@ func save() -> void:
 	var res := {}
 	for k in results:
 		res[str(k)] = results[k]
-	f.store_string(JSON.stringify({"stage": stage, "screen": screen, "flags": fl,
+	f.store_string(JSON.stringify({"tactical": tactical,
+		"stage": stage, "screen": screen, "flags": fl,
 		"mission": mission, "wingman": wingman, "names": names, "results": res,
 		"economy": {"cash": cash, "overhead": overhead, "purchases": purchases,
 			"plane_costs": plane_costs, "planes_lost": planes_lost, "planes_lost_last": planes_lost_last,
@@ -525,6 +552,8 @@ func load_saved() -> bool:
 	var d = JSON.parse_string(f.get_as_text())
 	if not d is Dictionary:
 		return false
+	tactical = bool(d.get("tactical", false))
+	Art.set_active("tactical" if tactical else "base")
 	stage = int(d.get("stage", 0))
 	screen = int(d.get("screen", -1))
 	mission = int(d.get("mission", -1))

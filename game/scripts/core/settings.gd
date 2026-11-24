@@ -41,13 +41,29 @@ const DEFAULTS := {
 		"deadzone": 0.12},
 	"audio": {"volume": 0.8, "subtitles": true, "music_on": true, "music": 0.6},
 	"data": {"game_dir": ""},
+	"game": {"mode": 0},  # 0 = realistic, 1 = arcade
 }
+
+## Session-only override from --mode=arcade|realistic (not saved to disk).
+var mode_override := ""
 
 
 func _ready() -> void:
 	_cfg.load(PATH)
 	_apply_input_map()
 	apply_video()
+
+
+func is_arcade() -> bool:
+	if mode_override == "arcade":
+		return true
+	if mode_override == "realistic":
+		return false
+	return int(get_value("game", "mode", 0)) == 1
+
+
+func mode_name() -> String:
+	return "arcade" if is_arcade() else "realistic"
 
 
 func get_value(section: String, key: String, fallback = null):

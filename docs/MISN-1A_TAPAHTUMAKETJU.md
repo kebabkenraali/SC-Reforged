@@ -51,8 +51,11 @@ Maasto MAURITAN. Reitti (pelaajan route-blokki 0, tekstit MSGS 0–3):
 | 3 | Scenic Nouakchott | 8 | |
 | 4 | Head Home | 2 | laskeutuminen (a2 02), Strike Base |
 
-Remaken HUD/autopilotti näyttää kuitenkin Nouakchottin ennen rahtikenttää, kuten
-Playtesters Guiden suosittelema taktiikka. Alkuperäisen mission IFF-dataa ei muuteta.
+**Korjattu 23.11.2026:** aiempi remake-override vaihtoi Land Cargo ja Scenic
+Nouakchott -reittipisteet keskenään. Tämä ohjasi autopilotin länteen, vaikka
+saatettava C-130 lensi rahtikentälle, ja pikamatka ohitti MiG-alueen niin, että
+banditit ilmestyivät vasta tukikohdassa. Override on poistettu; reitti noudattaa
+alkuperäistä mission IFF -järjestystä.
 
 Sijainnit (karttakoordinaatit itä/pohjoinen, korjatun AREA-tulkinnan jälkeen, tarkistettu maastoa vasten):
 
@@ -100,7 +103,40 @@ Radiorepliikit tulevat INTEL/<cast>.IFF:stä (C-130 #20/#21, STRIBASE #20/#21).
 | C-130 "turvassa" ja "tehtävä suoritettu" heti kohtaamisessa | `97` luettiin suuntana ja odottavat MiGit "kuolleina" | `97` = etäisyys; odottavat koneet elossa ja kaukana |
 | Radio ei toiminut | Ei ääniä; keksityt chatter-rivit; HUD:n `last_message_age()` -bugi kirjoitti viestien päälle | Alkuperäiset INTEL-repliikit SPEECH.PAK-äänillä jonossa (`radio_call`), tapahtumakutsut, HUD-ikä korjattu |
 | Flyby ei näkynyt pikamatkalla | Animaatio pelin ajassa (time_scale 8 -> 0.6 s); ohjaamonäkymässä kone piilossa; hyppy ilman flybyta | Reaaliaika, kone näkyvissä flybyn ajan, hyppy käynnistää flybyn; odottavat viholliset eivät estä pikamatkaa |
+| **Pikamatka korvattu 23.11.2026** | Hyppy suoraan reittipisteen keskelle ohitti skenaarioalueen: saatettava kone jäi omalle reitilleen, autopilotti kääntyi väärään reittipisteeseen ja banditit syntyivät vasta tukikohdassa | F7 asettaa nyt pelaajan ja ystävälliset koneet **10 km ennen** reittipistettä, suunnattuna sitä kohti. `nav_index` ei enää hyppyydy: viimeinen osuus lennetään, joten alueen skripti (C-130-kohtaus, MiG:t) käynnistyy oikeassa järjestyksessä. `--fasttravel` on testikomentona käytössä (alias `--approachjump`). Kohtauksen tarkistus ajetaan myös reittipisteen saapumishetkellä, jotta nopea ajoharppaus ei ohita sitä. Lisäksi taisteluautopilotin luovutus laskeutumiselle asettaa koneen puhtaalle 8 km loppulähestymiselle (alkuperäinen reitti tulee kotiin lännestä Nouakchottin yli) |
 | C-130 aktivoitui kartan origoon | Sen absoluuttinen PART-alkupaikka on maaston alla, vaikka aktivointi tapahtuu Rendezvous-kohtauksen sisääntulossa | Alueeseen perustuva sijoitus on toteutettu, mutta regression-testi ja täysi lento ovat vielä varmistamatta |
+
+### Rahtikoneen rullaus ja laskeutumisanimaatio (23.11.2026)
+
+Aiemmin C-130 poistettiin heti kosketuksen jälkeen (`vm_remove`), joten se ei
+ehtinyt rullata sivuun. Nyt skriptin `a2`-laskeutumisen päätyttyä koneelle
+annetaan `taxi_to`-piste 220 m eteenpäin ja 150 m sivuun, ja `vm_action_done`
+odottaa rullauksen loppua ennen poistamista. Lokista:
+`TRANSPORT landed, taxiing aside to (-2096.7, 1241.0, 29968.2)`.
+
+F6/--autoland -toiminnolla on nyt oma kamera-animaatio: kamera seuraa konetta
+3 s, siirtyy sitten kiinteään paikkaan kiitotien vieressä ja katsoo
+laskeutumista. Hyppy tehdään 3,5 km:n loppulähestymiseen (aiemmin 9 km), joten
+kokonaisuus mahtuu näkyväksi. Kuva: `tmp/landing_anim.png` (kamera hangaarin
+kohdalla, F-16 1,3 km päässä lähestymässä).
+
+### Siirtymän animaatio ja lisäosan valikkopääsys (23.11.2026)
+
+F7:n yhteydessä toistetaan nyt alkuperäisen kaltainen **siirtymäanimaatio**
+(`camera_rig.gd start_jump`): 3 sekunnin leikkaus, jossa kamera lähtee koneen
+nenästä, liukuu siiven ohi ja nousee perän taakse. Animaatio on oikeassa
+ajassa, joten `--fast` (time_scale 10) ei lyhennä sitä. Mikä tahansa kameran
+vaihto keskeyttää leikkauksen, kuten alkuperäisessäkin. Valikkopainike
+**Tactical Operations** käynnistää lisäosan kampanjan suoraan
+(`main.gd start_tactical` → `Art.set_active("tactical")` → GAMEFLO2.IFF).
+
+**Todistus 23.11.2026:** täysi MISN-1A ilman `--god`/`--endless_ammo`: `result=success`,
+`Landed at base`, radiojärjestys lähtölupa → C-130 "Glad you could join us" →
+Hawk "Bandits inbound" → MiG:t alas → C-130 "We're safe" → "Mission accomplished"
+→ laskeutumislupa. `waypoint_approach_test.gd`: 4/4 lähestymistä, 10 km (viimeinen
+8 km), ystävällinen kone mukana, 0 virhettä. Näkyvä kuva: `tmp/approach_proof.png`
+(HUD: `NAV 1/4: Rendezvous With Cargo 9.0 km`, siipimies 0.2 km päässä).
+Animaatiosta `tmp/jump_anim.png` ja valikosta `tmp/menu_tactical.png`.
 
 Testattu headless-ajolla (3 rinnakkaista): radiojärjestys tukikohta (lähtölupa) -> C-130 "Glad you could join us"
 kohtaamisessa -> Stern "Bandits inbound" kun MiGit ilmestyvät -> MiGien kuolinhuudot + Sternin kuittaukset ->

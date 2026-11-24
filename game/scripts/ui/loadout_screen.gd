@@ -3,9 +3,9 @@
 ## Based on the original Strike Commander weapon loading screen.
 extends Control
 
+const Art = preload("res://scripts/core/art.gd")
+const Shape = preload("res://scripts/formats/sc_shape.gd")
 const Weapons = preload("res://scripts/game/weapons.gd")
-const AircraftMeshes = preload("res://scripts/game/aircraft_meshes.gd")
-const ExternalModels = preload("res://scripts/game/external_models.gd")
 const UiTheme = preload("res://scripts/ui/ui_theme.gd")
 # SCData and Settings are autoload singletons (see project.godot); do not preload them.
 
@@ -17,8 +17,7 @@ var plane_model: String = "OBJECTS/F-16DES.IFF"
 var _loadout: Dictionary = {}
 var _available: Dictionary = {}
 var _hardpoints: Array = []
-var _plane_node: Node3D
-var _plane_mesh: MeshInstance3D
+var _profile := "f16"
 
 const HARDPOINTS_F16 := [
 	{"type": "tip", "side": -1, "pos": Vector2(-120, -40), "max": 1, "weapons": ["SWINDERM", "SWINDERJ", "AMRAAM"]},
@@ -28,6 +27,29 @@ const HARDPOINTS_F16 := [
 	{"type": "center", "side": 0, "pos": Vector2(0, 50), "max": 1, "weapons": ["AGM-65D", "MK82", "MK20", "DURANDAL", "FUEL_TANK"]},
 	{"type": "gun", "side": 0, "pos": Vector2(0, -10), "max": 1, "weapons": ["VULCAN"]},
 ]
+
+## The original loadout screen is specific to the aircraft. The F-16 layout is
+## decoded from the game; the other profiles keep the same station layout with
+## the hardpoints that aircraft actually carries.
+const HARDPOINTS := {
+	"f16": HARDPOINTS_F16,
+	"mig29": [
+		{"type": "tip", "side": -1, "pos": Vector2(-110, -40), "max": 1, "weapons": ["SWINDERM", "AMRAAM"]},
+		{"type": "tip", "side": 1, "pos": Vector2(110, -40), "max": 1, "weapons": ["SWINDERM", "AMRAAM"]},
+		{"type": "wing", "side": -1, "pos": Vector2(-75, 20), "max": 2, "weapons": ["SWINDERM", "SWINDERJ", "AGM-65D", "MK82"]},
+		{"type": "wing", "side": 1, "pos": Vector2(75, 20), "max": 2, "weapons": ["SWINDERM", "SWINDERJ", "AGM-65D", "MK82"]},
+		{"type": "gun", "side": 0, "pos": Vector2(0, -10), "max": 1, "weapons": ["VULCAN"]},
+	],
+	"mig21": [
+		{"type": "wing", "side": -1, "pos": Vector2(-70, 15), "max": 1, "weapons": ["SWINDERJ", "MK82"]},
+		{"type": "wing", "side": 1, "pos": Vector2(70, 15), "max": 1, "weapons": ["SWINDERJ", "MK82"]},
+		{"type": "gun", "side": 0, "pos": Vector2(0, -10), "max": 1, "weapons": ["VULCAN"]},
+	],
+}
+
+## Original weapon-loading screen (OPTIONS.IFF screen 15). Its background is
+## the only picture on this screen - no model-asset aircraft is drawn over it.
+const LOADOUT_SCREEN_ID := 15
 
 const RACK_CATEGORIES := [
 	{"name": "air", "label": "AIR-TO-AIR", "weapons": ["SWINDERM", "SWINDERJ", "AMRAAM"], "color": Color(0.3, 0.7, 1.0)},
@@ -44,7 +66,7 @@ func _ready() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 	
-	_build_hangar_viewport()
+	_build_original_background()
 	
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -64,7 +86,7 @@ func _ready() -> void:
 	
 	left_panel.add_child(UiTheme.title_label("ORDNANCE", 24))
 	var sub := Label.new()
-	sub.text = "Click weapon to add/remove (pairs). Right-click rack to remove."
+	sub.text = "Left-click a weapon to load a pair, right-click to unload it. The gun is always available."
 	sub.add_theme_font_size_override("font_size", 12)
 	sub.add_theme_color_override("font_color", Color(0.7, 0.7, 0.65))
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -123,71 +145,28 @@ func _ready() -> void:
 	_refresh_inventory_display()
 
 
-func _build_hangar_viewport() -> void:
-	var svc := SubViewportContainer.new()
-	svc.stretch = true
-	svc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	svc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(svc)
-	
-	var vp := SubViewport.new()
-	vp.msaa_3d = Viewport.MSAA_4X
-	svc.add_child(vp)
-	
-	var world := Node3D.new()
-	vp.add_child(world)
-	
-	var sun := DirectionalLight3D.new()
-	sun.rotation = Vector3(deg_to_rad(-30), deg_to_rad(30), 0)
-	sun.light_color = Color(1.0, 0.85, 0.6)
-	sun.light_energy = 2.0
-	sun.shadow_enabled = true
-	world.add_child(sun)
-	
-	var env := Environment.new()
-	env.background_mode = Environment.BG_CLEAR_COLOR
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_color = Color(0.3, 0.35, 0.45)
-	env.ambient_light_energy = 0.8
-	var we := WorldEnvironment.new()
-	we.environment = env
-	world.add_child(we)
-	
-	var cam := Camera3D.new()
-	cam.position = Vector3(0, 4, 25)
-	cam.fov = 40
-	cam.near = 0.1
-	world.add_child(cam)
-	cam.look_at(Vector3(0, 0, 0))
-	
-	var pal: PackedColorArray = SCData.palette()
-	var smooth: bool = Settings.get_value("video", "smooth_textures")
-	var model = SCData.model(plane_model)
-	var override_mesh = ExternalModels.override_mesh(plane_model)
-	var modern: Mesh = null
-	if override_mesh == null and model == null:
-		modern = AircraftMeshes.build(plane_model)
-	var use_mesh: Mesh = override_mesh if override_mesh != null else modern
-	
-	_plane_node = Node3D.new()
-	world.add_child(_plane_node)
-	
-	_plane_mesh = MeshInstance3D.new()
-	if model != null and use_mesh == null:
-		_plane_mesh.mesh = model.build_mesh(pal, 0, smooth)
-	else:
-		_plane_mesh.mesh = use_mesh
-	_plane_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	_plane_node.add_child(_plane_mesh)
-	
-	var aabb := _plane_mesh.mesh.get_aabb() if _plane_mesh.mesh else AABB(Vector3(-5, -1, -8), Vector3(10, 2, 16))
-	_plane_mesh.position = -aabb.get_center()
-	_plane_node.rotation = Vector3(0, deg_to_rad(180), 0)
-
-
-func _process(dt: float) -> void:
-	if is_instance_valid(_plane_node):
-		_plane_node.rotate_y(dt * 0.4)
+## Draws the original 320x200 weapon-loading screen art (shape 91 of
+## OPTSHPS.PAK) behind the 3D aircraft, using the same palette-index layering
+## as the base screens. Missing original data leaves the dark fallback intact.
+func _build_original_background() -> void:
+	var gf = Art.gameflow()
+	var s = gf.screens.get(LOADOUT_SCREEN_ID)
+	if s == null or s.back_shapes.is_empty():
+		return
+	var pal: PackedColorArray = Art.palette("opt", s.back_pals + [s.fore_pal])
+	var canvas := Art.new_canvas()
+	for shp in s.back_shapes:
+		var fr: Array = Art.frames("opt", shp)
+		if not fr.is_empty():
+			Art.blit(canvas, fr[0], Vector2i.ZERO)
+	var rect := TextureRect.new()
+	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_SCALE
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	rect.texture = ImageTexture.create_from_image(Art.canvas_image(canvas, pal))
+	add_child(rect)
 
 
 func _build_racks(parent: VBoxContainer) -> void:
@@ -228,6 +207,7 @@ func _build_racks(parent: VBoxContainer) -> void:
 		for wname in cat.weapons:
 			var btn := Button.new()
 			btn.text = Weapons.label(wname)
+			btn.set_meta("base_text", btn.text)
 			btn.tooltip_text = wname
 			btn.name = wname
 			btn.custom_minimum_size = Vector2(0, 32)
@@ -252,63 +232,48 @@ func _on_rack_gui_input(event: InputEvent, wname: String, cat: String) -> void:
 			_try_remove_weapon(wname, cat)
 
 
-func _try_add_weapon(wname: String, cat: String) -> void:
+func _try_add_weapon(wname: String, _cat: String) -> void:
 	var avail: int = _available.get(wname, 0)
 	if avail < 2:
 		_show_toast("Not enough %s in inventory (need 2, have %d)" % [Weapons.label(wname), avail])
 		return
-	
-	var hp = _find_free_hardpoint(wname)
-	if hp == null:
-		_show_toast("No compatible hardpoint free for %s" % Weapons.label(wname))
+	# A pair may be split over two single-slot stations (the wingtips), so
+	# count free slots across all compatible hardpoints instead of requiring
+	# one station with room for two.
+	if _free_slots(wname) < 2:
+		_show_toast("No free hardpoint for %s - right-click a weapon to unload it first" % Weapons.label(wname))
 		return
-	
 	_loadout[wname] = _loadout.get(wname, 0) + 2
 	_available[wname] = avail - 2
-	hp.used += 2
-	
 	_refresh_loadout()
 	_refresh_inventory_display()
 
 
-func _try_remove_weapon(wname: String, cat: String) -> void:
+func _try_remove_weapon(wname: String, _cat: String) -> void:
 	var current: int = _loadout.get(wname, 0)
 	if current < 2:
 		_show_toast("No %s loaded to remove" % Weapons.label(wname))
 		return
-	
-	var hp = _find_loaded_hardpoint(wname)
-	if hp == null:
-		_show_toast("Error: weapon not found on hardpoints")
-		return
-	
 	_loadout[wname] = current - 2
 	if _loadout[wname] == 0:
 		_loadout.erase(wname)
 	_available[wname] = _available.get(wname, 0) + 2
-	hp.used -= 2
-	
 	_refresh_loadout()
 	_refresh_inventory_display()
 
 
-func _find_free_hardpoint(wname: String):
+## Total free slots for `wname` over all compatible hardpoints.
+func _free_slots(wname: String) -> int:
+	var free := 0
 	for hp in _hardpoints:
-		if wname in hp.weapons and hp.used < hp.max:
-			return hp
-	return null
-
-
-func _find_loaded_hardpoint(wname: String):
-	for hp in _hardpoints:
-		if wname in hp.weapons and hp.used > 0:
-			return hp
-	return null
+		if wname in hp.weapons:
+			free += maxi(0, int(hp.max) - int(hp.used))
+	return free
 
 
 func _refresh_loadout() -> void:
 	_hardpoints.clear()
-	var hp_defs := HARDPOINTS_F16
+	var hp_defs: Array = HARDPOINTS.get(_profile, HARDPOINTS_F16)
 	
 	for hpd in hp_defs:
 		var hp: Dictionary = (hpd as Dictionary).duplicate()
@@ -326,11 +291,15 @@ func _refresh_loadout() -> void:
 					hp.used += can_take
 					remaining -= can_take
 	
+	# Show the loaded count on each rack button so the selection is visible.
 	for cat in RACK_CATEGORIES:
 		for wname in cat.weapons:
-			var btn := find_child(wname, true, false)
+			var btn := find_child(wname, true, false) as Button
 			if btn:
-				pass
+				var base: String = btn.get_meta("base_text", btn.text)
+				btn.set_meta("base_text", base)
+				var n: int = int(_loadout.get(wname, 0))
+				btn.text = base if n == 0 else "%s  x%d" % [base, n]
 
 
 func _refresh_inventory_display() -> void:
@@ -375,10 +344,7 @@ func _get_aircraft_profile() -> String:
 
 
 func _on_fly_pressed() -> void:
-	if _loadout.is_empty():
-		_show_toast("No weapons loaded! Select at least some ordnance.")
-		return
-	
+	# Gun-only is a valid loadout: the player decides what to carry.
 	var final_loadout := _loadout.duplicate()
 	final_loadout["VULCAN"] = 1000
 	
@@ -399,15 +365,11 @@ func _show_toast(msg: String) -> void:
 func setup_for_mission(camp: Object, model: String, inventory: Dictionary) -> void:
 	campaign = camp
 	plane_model = model
+	_profile = _get_aircraft_profile()
 	_available = inventory.duplicate()
-	
-	var model_data = SCData.model(plane_model)
-	if model_data != null:
-		var default_loadout = Weapons.loadout(model_data)
-		_loadout = default_loadout.duplicate()
-		for wname in _loadout:
-			_available[wname] = _available.get(wname, 0) - int(_loadout[wname])
-	
+	# Start empty: a pre-filled default filled every station, so no weapon
+	# could ever be added and the player could not change the configuration.
+	_loadout = {}
 	_refresh_loadout()
 	_refresh_inventory_display()
 

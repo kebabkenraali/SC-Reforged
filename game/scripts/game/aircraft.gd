@@ -69,6 +69,7 @@ var route: Array = []           # Vector3 waypoints from the route block
 var route_index := 0
 var attack_ids: Array = []      # PART ids the AI block says to attack (a7)
 var scripted := false           # behaviour comes from a mission AI program
+var god_mode := false           # testing: immune to damage
 var takeoff := false            # script action a1: take off from the ground
 var takeoff_after: Node3D       # wait for this aircraft (the flight lead) to get airborne
 ## Route cruise speed in m/s (0 = no limit). Every aircraft shares the F-16
@@ -77,6 +78,9 @@ var cruise_speed := 0.0
 ## Ground point of a script landing (action a2) or null: the route then glides
 ## down to it instead of holding the waypoint height.
 var land_at = null
+## After a script landing the transport rolls off the runway to this point
+## (set by flight_scene) before the mission script removes it.
+var taxi_to = null
 var _behind_dir := 0       # steer_heading: turn direction kept while the aim is behind
 
 var model_instance: MeshInstance3D
@@ -122,9 +126,14 @@ func setup(model, palette: PackedColorArray, smooth: bool, modern_mesh: Mesh = n
 ## Applies a custom weapon loadout (from the loadout screen).
 ## `loadout` is a dictionary {weapon_name: count}.
 func apply_loadout(loadout: Dictionary) -> void:
-	if loadout == null or loadout.is_empty():
+	if loadout == null:
 		return
 	var Weapons = preload("res://scripts/game/weapons.gd")
+	# The player may deselect a type completely; erase it from the original
+	# WPNS loadout so the flight really carries only what was chosen.
+	for wname in missiles.keys():
+		if wname != "VULCAN" and not loadout.has(wname):
+			missiles.erase(wname)
 	for wname in loadout:
 		if Weapons.is_missile(wname) or Weapons.is_bomb(wname) or wname == "VULCAN":
 			missiles[wname] = loadout[wname]
@@ -264,7 +273,7 @@ func consume_round(rate := 0.05) -> void:
 
 
 func damage(amount: float, cause = null) -> void:
-	if not alive:
+	if not alive or god_mode:
 		return
 	last_hit_by = cause
 	health -= amount
@@ -331,6 +340,22 @@ func _ai(dt: float) -> void:
 		throttle = 0.55
 		return
 	if on_ground:
+		if taxi_to != null:
+			# Ground steering uses controls.z (yaw). Roll clear of the runway,
+			# then park: the C-130 stays visible while the debrief radio plays.
+			var to := Vector3(taxi_to.x - global_position.x, 0.0, taxi_to.z - global_position.z)
+			var flat: float = to.length()
+			if flat < 18.0 or speed() < 1.0 and flat < 60.0:
+				velocity = Vector3.ZERO
+				controls = Vector3.ZERO
+				throttle = 0.0
+				brakes = true
+				return
+			var local := global_transform.basis.transposed() * to.normalized()
+			controls = Vector3(0.0, 0.0, clampf(atan2(local.x, -local.z) * 1.5, -1.0, 1.0))
+			throttle = 0.22
+			brakes = speed() > 16.0
+			return
 		if takeoff and (takeoff_after == null or not is_instance_valid(takeoff_after) or not takeoff_after.on_ground):
 			# Full power down the runway, rotate at 75 m/s.
 			brakes = false

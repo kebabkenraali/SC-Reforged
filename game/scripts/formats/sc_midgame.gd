@@ -19,6 +19,10 @@ const ORIGIN := Vector2i(0, 24)
 const CACHE := "user://midgame_palettes.json"
 
 var number := 0
+var art_path := ""
+var voc_path := ""
+var text_path := ""
+var text_form := ""
 var shots := []       # [{ frames: [decoded], palette: PackedColorArray }]
 var voices := []      # [AudioStreamWAV]
 var texts := []       # spoken lines / captions in order
@@ -26,28 +30,61 @@ var titles := []      # on-screen titles (FORM DATA when there is no speech text
 
 
 static func exists(n: int) -> bool:
+	if Art.active_set == "tactical":
+		# The add-on ships one shared voice archive and three art archives;
+		# GAMEFLO2.IFF's story effects use the numbers 5, 2 and 3.
+		return n in [2, 3, 5] and (SCData.has("MIDGAMES/TOMIDVOC.PAK")
+			or SCData.has("MIDGAMES/TO1MID1.PAK"))
 	return SCData.has("MIDGAMES/MID%d.PAK" % n) or SCData.has("MIDGAMES/MID%dVOC.PAK" % n)
 
 
 static func load_number(n: int):
 	var m = load("res://scripts/formats/sc_midgame.gd").new()
 	m.number = n
+	if Art.active_set == "tactical":
+		# TO1MID1/2/3 in the order the add-on campaign presents them (MG01's
+		# captions come from MIDGAMS2.IFF). The exact original staging is only
+		# in TOPTTST1.EXE and is not recorded yet, so this is the fallback player.
+		var art: int = {5: 1, 2: 2, 3: 3}.get(n, 1)
+		m.art_path = "MIDGAMES/TO1MID%d.PAK" % art
+		m.voc_path = "MIDGAMES/TOMIDVOC.PAK"
+		m.text_path = "MIDGAMES/MIDGAMS2.IFF"
+		m.text_form = "FORM:MG01"
+	else:
+		m.art_path = "MIDGAMES/MID%d.PAK" % n
+		m.voc_path = "MIDGAMES/MID%dVOC.PAK" % n
+		m.text_path = "MIDGAMES/MIDGAMES.IFF"
+		m.text_form = "FORM:MG%02d" % n
 	m._load()
 	return m
 
 
 func _load() -> void:
-	var entries: Array = Pak.entries(SCData.read("MIDGAMES/MID%d.PAK" % number))
+	if art_path == "":
+		art_path = "MIDGAMES/MID%d.PAK" % number
+	if voc_path == "":
+		voc_path = "MIDGAMES/MID%dVOC.PAK" % number
+	if text_path == "":
+		text_path = "MIDGAMES/MIDGAMES.IFF"
+	if text_form == "":
+		text_form = "FORM:MG%02d" % number
+	var art_buf: PackedByteArray = SCData.read(art_path)
+	var entries: Array = Pak.entries(art_buf)
+	var flags := Pak.flags(art_buf)
 	var shapes := []
 	var palettes := []
-	for e in entries:
+	for k in entries.size():
+		var e: PackedByteArray = entries[k]
 		if e.size() < 8:
 			continue
-		# Palettes may be stored raw or LZW packed; check both forms.
+		# Palettes may be stored raw or LZW packed; check both forms. The PAK
+		# entry flag decides: guessing LZW from the first u32 corrupts stored
+		# entries (the add-on archives have different first words).
 		if _is_palette(e):
 			palettes.append(e)
 			continue
-		var raw := Shape.unpack(e)
+		var flag: int = flags[k] if k < flags.size() else -1
+		var raw := Shape.unpack(e, flag)
 		if _is_palette(raw):
 			palettes.append(raw)
 			continue
@@ -64,9 +101,17 @@ func _load() -> void:
 		if not decoded.is_empty() and decoded[0].w >= 300 and _coverage(decoded) >= 0.15:
 			shapes.append(decoded)
 	# Palettes shared by all cut-scenes (MIDGAMES.PAK) are candidates too.
-	for e in Pak.entries(SCData.read("MIDGAMES/MIDGAMES.PAK")):
-		if _is_palette(e):
-			palettes.append(e)
+	var shared_buf: PackedByteArray = SCData.read("MIDGAMES/MIDGAMES.PAK")
+	var shared_flags := Pak.flags(shared_buf)
+	var shared_entries: Array = Pak.entries(shared_buf)
+	for k in shared_entries.size():
+		var e: PackedByteArray = shared_entries[k]
+		if e.size() < 8:
+			continue
+		var flag: int = shared_flags[k] if k < shared_flags.size() else -1
+		var raw := Shape.unpack(e, flag)
+		if _is_palette(e) or _is_palette(raw):
+			palettes.append(raw if _is_palette(raw) else e)
 	var cands := _candidates(palettes)
 	var cache := _read_cache()
 	var key := str(number)
@@ -80,7 +125,7 @@ func _load() -> void:
 	for i in shapes.size():
 		shots.append({"frames": shapes[i], "palette": cands[clampi(int(picks[i]), 0, cands.size() - 1)]})
 
-	for e in Pak.entries(SCData.read("MIDGAMES/MID%dVOC.PAK" % number)):
+	for e in Pak.entries(SCData.read(voc_path)):
 		if e.size() > 26:
 			var s := Voc.to_stream(e)
 			if s != null:
@@ -89,8 +134,8 @@ func _load() -> void:
 
 
 func _load_texts() -> void:
-	var buf := SCData.read("MIDGAMES/MIDGAMES.IFF")
-	var mg = Iff.find(Iff.parse(buf), ["FORM:MG%02d" % number])
+	var buf := SCData.read(text_path)
+	var mg = Iff.find(Iff.parse(buf), [text_form])
 	if mg == null:
 		return
 	for part in mg.children:

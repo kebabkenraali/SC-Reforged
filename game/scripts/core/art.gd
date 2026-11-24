@@ -6,36 +6,102 @@ const Shape = preload("res://scripts/formats/sc_shape.gd")
 const Pak = preload("res://scripts/formats/pak_archive.gd")
 const Gameflow = preload("res://scripts/formats/sc_gameflow.gd")
 
-const ARCHIVES := {"opt": ["GAMEFLOW/OPTSHPS.PAK", "GAMEFLOW/OPTPALS.PAK"],
+const ARCHIVES_BASE := {"opt": ["GAMEFLOW/OPTSHPS.PAK", "GAMEFLOW/OPTPALS.PAK"],
 	"conv": ["GAMEFLOW/CONVSHPS.PAK", "GAMEFLOW/CONVPALS.PAK"]}
+## Tactical Operations screens/conversations use their own shape sets; its
+## conversations still use the original CONVPALS palette archive.
+const ARCHIVES_TACTICAL := {"opt": ["GAMEFLOW/OPTSHPS2.PAK", "GAMEFLOW/OPTPALS2.PAK"],
+	"conv": ["GAMEFLOW/CONVSHP2.PAK", "GAMEFLOW/CONVPALS.PAK"]}
 const SCREEN := Vector2i(320, 200)
 
+## "base" or "tactical" — selects which original data set the whole UI reads.
+static var active_set := "base"
 static var _paks := {}
 static var _frames := {}
-static var _gameflow
+static var _gameflow := {}
+static var _fonts_set := ""
+
+
+static func set_active(value: String) -> void:
+	if value == active_set and _gameflow.has(value):
+		return
+	active_set = value if value == "tactical" else "base"
+	_paks.clear()
+	_frames.clear()
+	_fonts.clear()
+	_fonts_set = active_set
+
+
+static func archives() -> Dictionary:
+	return ARCHIVES_TACTICAL if active_set == "tactical" else ARCHIVES_BASE
 
 
 static func gameflow():
-	if _gameflow == null:
-		_gameflow = Gameflow.load_from(SCData.read("GAMEFLOW/GAMEFLOW.IFF"),
-			SCData.read("GAMEFLOW/OPTIONS.IFF"), SCData.read("GAMEFLOW/CONVDATA.IFF"))
-	return _gameflow
+	if not _gameflow.has(active_set):
+		if active_set == "tactical":
+			_gameflow[active_set] = Gameflow.load_from(SCData.read("GAMEFLOW/GAMEFLO2.IFF"),
+				SCData.read("GAMEFLOW/OPTIONS2.IFF"), SCData.read("GAMEFLOW/CONVDAT2.IFF"))
+		else:
+			_gameflow[active_set] = Gameflow.load_from(SCData.read("GAMEFLOW/GAMEFLOW.IFF"),
+				SCData.read("GAMEFLOW/OPTIONS.IFF"), SCData.read("GAMEFLOW/CONVDATA.IFF"))
+	return _gameflow[active_set]
+
+
+## The add-on shape archives are overlays: CONVSHP2.PAK has only 3 real shapes
+## (indices 93-95) while CONVDAT2.IFF still points faces at the base CONVSHPS
+## indices. Merge the base entries with the add-on's non-empty ones.
+static func _overlay_base(path: String) -> String:
+	match path:
+		"GAMEFLOW/OPTSHPS2.PAK": return "GAMEFLOW/OPTSHPS.PAK"
+		"GAMEFLOW/CONVSHP2.PAK": return "GAMEFLOW/CONVSHPS.PAK"
+		"GAMEFLOW/OPTPALS2.PAK": return "GAMEFLOW/OPTPALS.PAK"
+	return ""
+
+
+static func _pak(path: String) -> Dictionary:
+	if not _paks.has(path):
+		var base := _overlay_base(path)
+		var buf: PackedByteArray = SCData.read(base if base != "" else path)
+		var e: Array = Pak.entries(buf).duplicate()
+		var f: PackedByteArray = Pak.flags(buf)
+		if base != "":
+			var obuf: PackedByteArray = SCData.read(path)
+			var oe: Array = Pak.entries(obuf)
+			var of: PackedByteArray = Pak.flags(obuf)
+			while e.size() < oe.size():
+				e.append(PackedByteArray())
+				f.append(0xFF)
+			var is_shapes: bool = path.contains("SHP2") or path.contains("SHPS2")
+			for i in oe.size():
+				if of[i] == 0xFF:
+					continue
+				if is_shapes and Shape.frames(Shape.unpack(oe[i], of[i])).is_empty():
+					continue  # entry 0 of these PAKs is a filename, not a shape
+				e[i] = oe[i]
+				f[i] = of[i]
+		_paks[path] = {"entries": e, "flags": f}
+	return _paks[path]
 
 
 static func _entries(path: String) -> Array:
-	if not _paks.has(path):
-		_paks[path] = Pak.entries(SCData.read(path))
-	return _paks[path]
+	return _pak(path).entries
+
+
+static func _entry_flags(path: String) -> PackedByteArray:
+	return _pak(path).flags
 
 
 ## Decoded frames of shape `index` in archive "opt" or "conv" (cached).
 static func frames(archive: String, index: int) -> Array:
-	var key := "%s:%d" % [archive, index]
+	var key := "%s:%s:%d" % [active_set, archive, index]
 	if not _frames.has(key):
 		var out := []
-		var e := _entries(ARCHIVES[archive][0])
+		var path: String = archives()[archive][0]
+		var e := _entries(path)
+		var flags := _entry_flags(path)
 		if index >= 0 and index < e.size():
-			for f in Shape.frames(Shape.unpack(e[index])):
+			var flag: int = flags[index] if index < flags.size() else -1
+			for f in Shape.frames(Shape.unpack(e[index], flag)):
 				var d := Shape.decode(f)
 				if not d.is_empty():
 					out.append(d)
@@ -46,7 +112,7 @@ static func frames(archive: String, index: int) -> Array:
 ## Base palette with partial palettes `indices` of the archive applied in order.
 static func palette(archive: String, indices: Array) -> PackedColorArray:
 	var pal: PackedColorArray = SCData.palette()
-	var e := _entries(ARCHIVES[archive][1])
+	var e := _entries(archives()[archive][1])
 	for i in indices:
 		if i >= 0 and i < e.size():
 			pal = Shape.apply_palette(pal, e[i])

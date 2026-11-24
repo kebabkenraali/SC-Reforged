@@ -5,7 +5,9 @@ from unicorn import *
 from unicorn.x86_const import *
 
 GAME = os.environ.get('SC_GAME_DIR', r'C:\Gog games\Strike Commander')
-EXE = os.path.join(GAME, 'OPTTEST.EXE')
+# SC_EXE allows tracing the Tactical Operations tool (TOPTTST1.EXE) with the
+# same emulator; the default stays the base game's OPTTEST.EXE.
+EXE = os.path.join(GAME, os.environ.get('SC_EXE', 'OPTTEST.EXE'))
 
 # ---------------------------------------------------------------- ISO files
 import sclib

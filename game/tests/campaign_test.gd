@@ -50,8 +50,11 @@ func _initialize() -> void:
 	Campaign.save_path = "user://campaign_test.json"
 
 	var files: Array = Campaign.mission_files()
-	_check("40 campaign missions in order", files.size() == 40 and files[0].ends_with("MISN-1A.IFF")
-		and files[3].ends_with("MISN-2A.IFF") and files[4].ends_with("MISN-3A.IFF"), "%d %s" % [files.size(), files.slice(0, 5)])
+	# The original selects missions by FORM MLST index, alternates included.
+	_check("47 campaign missions in original MLST order", files.size() == 47 \
+		and files[0].ends_with("MISN-1A.IFF") and files[3].ends_with("MISN-2A.IFF") \
+		and files[12].ends_with("MISN-5BB.IFF") and files[25].ends_with("MISN-9AA.IFF") \
+		and files[46].ends_with("MISN-11X.IFF"), "%d %s" % [files.size(), files.slice(0, 5)])
 
 	var c = Campaign.new()
 	var host := FakeHost.new()

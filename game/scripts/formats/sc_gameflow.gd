@@ -93,15 +93,17 @@ func _parse_economy(buf: PackedByteArray, nodes: Array) -> void:
 			changes[buf[info.off]] = c
 	var ml = Iff.find(nodes, ["FORM:MLST", "DATA"])
 	if ml != null:
-		var cur := ""
-		for k in ml.size:
-			var b: int = buf[ml.off + k]
-			if b == 0:
-				if cur != "":
-					mission_list.append(cur.to_upper())
-				cur = ""
-			else:
-				cur += char(b)
+		# FORM MLST / DATA is an array of fixed 8-byte, zero-padded names
+		# ("MISN-1a\0", "MISN-10a", ...). Splitting on NUL alone glues the
+		# full-length names together ("MISN-5bbMISN-5c").
+		for k in range(0, ml.size - 7, 8):
+			var cur := ""
+			for j in 8:
+				var b: int = buf[ml.off + k + j]
+				if b != 0:
+					cur += char(b)
+			if cur != "":
+				mission_list.append(cur.to_upper())
 
 
 func _parse_options(buf: PackedByteArray) -> void:

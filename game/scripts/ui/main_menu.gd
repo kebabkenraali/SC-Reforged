@@ -9,6 +9,7 @@ const SettingsMenu = preload("res://scripts/ui/settings_menu.gd")
 signal start_flight(area: String, plane: String, mission: String)
 signal open_viewer
 signal start_campaign(new_game: bool)
+signal start_tactical
 
 static var _aircraft_cache := PackedStringArray()
 
@@ -83,6 +84,12 @@ func _ready() -> void:
 	camp.text = "Start demo" if demo else "New campaign"
 	camp.pressed.connect(func(): start_campaign.emit(true))
 	box.add_child(camp)
+	if not demo:
+		var tac := Button.new()
+		tac.text = "Tactical Operations"
+		tac.tooltip_text = "Start the original Tactical Operations add-on campaign (GAMEFLO2.IFF)"
+		tac.pressed.connect(func(): start_tactical.emit())
+		box.add_child(tac)
 	if load("res://scripts/game/campaign.gd").has_save():
 		var cont := Button.new()
 		cont.text = "Continue demo" if demo else "Continue campaign"

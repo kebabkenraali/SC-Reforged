@@ -84,9 +84,12 @@ function Lentotulos([string]$nimi) {
 
 # --- 1. Yksikkotestit -------------------------------------------------------
 Write-Host "== Yksikkotestit =="
-$testit = @('smoke_test', 'mission_test', 'vm_test', 'flight_test', 'override_test',
-	'campaign_test', 'story_test', 'cutscene_vm_test', 'audio_test')
-if ($Hitaat) { $testit += 'all_missions_test' }
+$testit = @('smoke_test', 'mission_test', 'waypoint_test', 'conversation_test', 'coverage_test',
+	'mission_events_test', 'voice_audit', 'models_test', 'terrain_test', 'tactical_ops_test',
+	'mission_index_test',
+	'loadout_test', 'waypoint_approach_test', 'cockpit_test', 'cockpit_windows_test', 'cheats_test', 'vm_test', 'flight_test', 'override_test',
+	'campaign_test', 'campaign_state_test', 'tactical_flow_test', 'story_test', 'cutscene_vm_test', 'audio_test', 'vr_test', 'shader_test', 'camera_view_test', 'cutscene_audio_test', 'hud_attachment_test', 'librealspace_parity_test')
+if ($Hitaat) { $testit += 'all_missions_test', 'cockpit_mission_sweep' }
 foreach ($t in $testit) {
 	$raja = 150
 	if ($t -eq 'all_missions_test') { $raja = 900 }

@@ -15,6 +15,11 @@ dist/
 dist.7z
 shots/
 
+# libRealSpace reference checkout + build (local-only, never commit; original
+# SC.DAT must be supplied by the player at runtime, never stored here)
+tools/librealspace/
+tools/xr-simulator/
+
 # Scratch files. tmp/ holds dumps with original game text: never commit those.
 tmp/*
 !tmp/flight_scene_gd_agentB_lineup_20261111.gd

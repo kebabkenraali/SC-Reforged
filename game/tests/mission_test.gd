@@ -24,10 +24,13 @@ func _initialize() -> void:
 		"Scenic Nouakchott",
 		"Head Home",
 	]
+	# The gameplay route must follow the original data: a previous remake-only
+	# override swapped Land Cargo and Nouakchott and sent the autopilot the
+	# wrong way while the escorted C-130 flew to the cargo field.
 	var expected_flight_route := [
 		"Rendezvous With Cargo",
-		"Scenic Nouakchott",
 		"Land Cargo",
+		"Scenic Nouakchott",
 		"Head Home",
 	]
 	if original_route != expected_original_route:

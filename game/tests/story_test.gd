@@ -89,7 +89,7 @@ func _closeup(Art, gf, line: Dictionary) -> Image:
 	var arch0: String = "opt" if not gf.backs.get(line.bg, []).is_empty() and gf.backs[line.bg][0].archive == 1 else "conv"
 	var pal = Art.palette(arch0, pals)
 	pal = Art.palette("conv", []) if pals.is_empty() else pal
-	var e = Art._entries(Art.ARCHIVES["conv"][1])
+	var e = Art._entries(Art.archives()["conv"][1])
 	if gf.face_palette >= 0:
 		pal = load("res://scripts/formats/sc_shape.gd").apply_palette(pal, e[gf.face_palette])
 	return Art.canvas_image(canvas, pal)
